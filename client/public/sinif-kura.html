@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sınıf Oturma Düzeni Kura Sistemi</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 30px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            text-align: center;
+            color: #667eea;
+            margin-bottom: 30px;
+            font-size: 2em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .info-panel {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .info-panel h2 {
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }
+
+        .info-panel p {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        .student-info {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 15px;
+            margin-bottom: 25px;
+            text-align: center;
+            min-height: 100px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+
+        .student-info.active {
+            background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+            transform: scale(1.02);
+        }
+
+        .student-name {
+            font-size: 2em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .student-order {
+            font-size: 1.1em;
+            color: #666;
+        }
+
+        .result-box {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+            padding: 30px;
+            border-radius: 15px;
+            margin: 25px 0;
+            text-align: center;
+            min-height: 150px;
+            display: none;
+            animation: slideIn 0.5s ease;
+        }
+
+        .result-box.show {
+            display: block;
+        }
+
+        .result-location {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+            margin-bottom: 15px;
+        }
+
+        .result-details {
+            font-size: 1.2em;
+            color: white;
+            opacity: 0.9;
+        }
+
+        button {
+            width: 100%;
+            padding: 18px;
+            font-size: 1.2em;
+            font-weight: bold;
+            border: none;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 15px;
+        }
+
+        .btn-start {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-start:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 40px rgba(102, 126, 234, 0.6);
+        }
+
+        .btn-draw {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+            color: white;
+            box-shadow: 0 10px 30px rgba(250, 112, 154, 0.4);
+            display: none;
+        }
+
+        .btn-draw.show {
+            display: block;
+            animation: pulse 2s infinite;
+        }
+
+        .btn-draw:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 40px rgba(250, 112, 154, 0.6);
+        }
+
+        .btn-next {
+            background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+            color: white;
+            box-shadow: 0 10px 30px rgba(132, 250, 176, 0.4);
+            display: none;
+        }
+
+        .btn-next.show {
+            display: block;
+        }
+
+        .btn-next:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 40px rgba(132, 250, 176, 0.6);
+        }
+
+        .btn-reset {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            box-shadow: 0 10px 30px rgba(240, 147, 251, 0.4);
+            display: none;
+            margin-top: 20px;
+        }
+
+        .btn-reset.show {
+            display: block;
+        }
+
+        .btn-reset:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 40px rgba(240, 147, 251, 0.6);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .seat-map {
+            display: none;
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 15px;
+        }
+
+        .seat-map.show {
+            display: block;
+        }
+
+        .seat-group {
+            margin-bottom: 20px;
+        }
+
+        .seat-group h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .seat {
+            background: white;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            font-size: 0.9em;
+            color: #333;
+        }
+
+        .seat.filled {
+            background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+            color: white;
+            font-weight: bold;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.05);
+            }
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .emoji {
+            font-size: 3em;
+            margin-bottom: 15px;
+            animation: bounce 1s ease;
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎲 Sınıf Oturma Düzeni Kura Sistemi</h1>
+        
+        <div class="info-panel">
+            <h2>Kura Bilgileri</h2>
+            <p>Toplam 34 öğrenci • 18 sıra (36 yer) • 3 sıra grubu</p>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressBar"></div>
+            </div>
+        </div>
+
+        <div class="student-info" id="studentInfo">
+            <p style="color: #999;">Kurayı başlatmak için butona tıklayın</p>
+        </div>
+
+        <div class="result-box" id="resultBox">
+            <div class="emoji">🎉</div>
+            <div class="result-location" id="resultLocation"></div>
+            <div class="result-details" id="resultDetails"></div>
+        </div>
+
+        <button class="btn-start" id="btnStart">Kurayı Başlat</button>
+        <button class="btn-draw" id="btnDraw">Kurayı Çek</button>
+        <button class="btn-next" id="btnNext">Sonraki Öğrenci</button>
+        <button class="btn-reset" id="btnReset">Yeniden Başlat</button>
+
+        <div class="seat-map" id="seatMap">
+            <h3 style="text-align: center; margin-bottom: 20px; color: #667eea;">Oturma Düzeni</h3>
+            <div class="seat-group">
+                <h3>🪟 Cam Kenarı</h3>
+                <div id="camKenarSeats"></div>
+            </div>
+            <div class="seat-group">
+                <h3>🚪 Kapı Kenarı</h3>
+                <div id="kapiKenarSeats"></div>
+            </div>
+            <div class="seat-group">
+                <h3>📍 Orta Sıra</h3>
+                <div id="ortaSeats"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const students = [
+            "Utku", "İnci", "Ayşe Mine", "Aslı", "Ali", "Asya", "Taha", "Çağlar", 
+            "Giray", "Çınar", "Azrahan", "Metehan", "Derin", "Ayza", "Ela", "Nehir", 
+            "Defne", "Fatih", "Furkan", "Görkem", "Toprak", "Hasan", "Kerim", 
+            "Mehmet Emre", "Melisa", "Selim", "Suden", "Fatmanur", "Egemen", 
+            "Tuğra", "Belis", "Elif", "Ataberk", "Kayra"
+        ];
+
+        const seatGroups = {
+            camKenar: { name: "Cam Kenarı", emoji: "🪟", seats: [] },
+            kapiKenar: { name: "Kapı Kenarı", emoji: "🚪", seats: [] },
+            orta: { name: "Orta Sıra", emoji: "📍", seats: [] }
+        };
+
+        // Her sıra grubunda 6 sıra, her sıra 2 kişilik (toplam 12 yer per grup)
+        const totalSeatsPerGroup = 12;
+
+        let currentStudentIndex = 0;
+        let availableSeats = [];
+        let assignedSeats = [];
+
+        // Tüm koltukları oluştur
+        function initializeSeats() {
+            availableSeats = [];
+            const groups = ['camKenar', 'kapiKenar', 'orta'];
+            
+            groups.forEach(group => {
+                for (let row = 1; row <= 6; row++) {
+                    for (let pos = 1; pos <= 2; pos++) {
+                        availableSeats.push({
+                            group: group,
+                            row: row,
+                            position: pos
+                        });
+                    }
+                }
+            });
+        }
+
+        function startDraw() {
+            initializeSeats();
+            currentStudentIndex = 0;
+            assignedSeats = [];
+            
+            document.getElementById('btnStart').style.display = 'none';
+            document.getElementById('btnDraw').classList.add('show');
+            document.getElementById('seatMap').classList.add('show');
+            
+            showCurrentStudent();
+            updateSeatMap();
+        }
+
+        function showCurrentStudent() {
+            if (currentStudentIndex >= students.length) {
+                finishDraw();
+                return;
+            }
+
+            const studentInfo = document.getElementById('studentInfo');
+            studentInfo.classList.add('active');
+            studentInfo.innerHTML = `
+                <div class="student-name">${students[currentStudentIndex]}</div>
+                <div class="student-order">Sıra: ${currentStudentIndex + 1} / ${students.length}</div>
+            `;
+
+            document.getElementById('resultBox').classList.remove('show');
+            document.getElementById('btnNext').classList.remove('show');
+
+            updateProgress();
+        }
+
+        function drawSeat() {
+            if (availableSeats.length === 0) return;
+
+            document.getElementById('btnDraw').classList.remove('show');
+
+            // Rastgele bir koltuk seç
+            const randomIndex = Math.floor(Math.random() * availableSeats.length);
+            const selectedSeat = availableSeats[randomIndex];
+            availableSeats.splice(randomIndex, 1);
+
+            // Atamayı kaydet
+            assignedSeats.push({
+                student: students[currentStudentIndex],
+                seat: selectedSeat
+            });
+
+            // Sonucu göster
+            showResult(selectedSeat);
+            updateSeatMap();
+        }
+
+        function showResult(seat) {
+            const resultBox = document.getElementById('resultBox');
+            const resultLocation = document.getElementById('resultLocation');
+            const resultDetails = document.getElementById('resultDetails');
+
+            const groupName = seatGroups[seat.group].name;
+            const groupEmoji = seatGroups[seat.group].emoji;
+
+            resultLocation.textContent = `${groupEmoji} ${groupName}`;
+            resultDetails.textContent = `${seat.row}. Sıra - ${seat.position}. Koltuk`;
+
+            resultBox.classList.add('show');
+
+            if (currentStudentIndex < students.length - 1) {
+                document.getElementById('btnNext').classList.add('show');
+            } else {
+                setTimeout(finishDraw, 1000);
+            }
+        }
+
+        function nextStudent() {
+            currentStudentIndex++;
+            document.getElementById('btnNext').classList.remove('show');
+            document.getElementById('btnDraw').classList.add('show');
+            showCurrentStudent();
+        }
+
+        function finishDraw() {
+            document.getElementById('studentInfo').classList.remove('active');
+            document.getElementById('studentInfo').innerHTML = `
+                <div class="emoji">✅</div>
+                <div class="student-name">Kura Tamamlandı!</div>
+                <div class="student-order">Tüm öğrenciler yerlerine yerleştirildi</div>
+            `;
+
+            document.getElementById('resultBox').classList.remove('show');
+            document.getElementById('btnDraw').classList.remove('show');
+            document.getElementById('btnNext').classList.remove('show');
+            document.getElementById('btnReset').classList.add('show');
+        }
+
+        function resetDraw() {
+            location.reload();
+        }
+
+        function updateProgress() {
+            const progress = (currentStudentIndex / students.length) * 100;
+            document.getElementById('progressBar').style.width = progress + '%';
+        }
+
+        function updateSeatMap() {
+            const camKenarDiv = document.getElementById('camKenarSeats');
+            const kapiKenarDiv = document.getElementById('kapiKenarSeats');
+            const ortaDiv = document.getElementById('ortaSeats');
+
+            // Grupları temizle
+            seatGroups.camKenar.seats = [];
+            seatGroups.kapiKenar.seats = [];
+            seatGroups.orta.seats = [];
+
+            // Atanmış koltukları gruplara ekle
+            assignedSeats.forEach(assignment => {
+                seatGroups[assignment.seat.group].seats.push(assignment);
+            });
+
+            // Haritayı güncelle
+            renderSeatGroup(camKenarDiv, 'camKenar');
+            renderSeatGroup(kapiKenarDiv, 'kapiKenar');
+            renderSeatGroup(ortaDiv, 'orta');
+        }
+
+        function renderSeatGroup(container, groupName) {
+            container.innerHTML = '';
+            
+            for (let row = 1; row <= 6; row++) {
+                const rowSeats = seatGroups[groupName].seats.filter(s => s.seat.row === row);
+                
+                if (rowSeats.length > 0) {
+                    rowSeats.forEach(seat => {
+                        const seatDiv = document.createElement('div');
+                        seatDiv.className = 'seat filled';
+                        seatDiv.textContent = `Sıra ${seat.seat.row} - ${seat.seat.position}. Koltuk: ${seat.student}`;
+                        container.appendChild(seatDiv);
+                    });
+                } else {
+                    const seatDiv = document.createElement('div');
+                    seatDiv.className = 'seat';
+                    seatDiv.textContent = `Sıra ${row}: Boş`;
+                    container.appendChild(seatDiv);
+                }
+            }
+        }
+
+        // Event listeners
+        document.getElementById('btnStart').addEventListener('click', startDraw);
+        document.getElementById('btnDraw').addEventListener('click', drawSeat);
+        document.getElementById('btnNext').addEventListener('click', nextStudent);
+        document.getElementById('btnReset').addEventListener('click', resetDraw);
+    </script>
+</body>
+</html>
