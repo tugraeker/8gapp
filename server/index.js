@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -8,14 +9,21 @@ const db = require('./database');
 
 const app = express();
 const server = http.createServer(app);
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
-    methods: ["GET", "POST"]
+    origin: FRONTEND_URL,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    credentials: true
   }
 });
 
-app.use(cors());
+app.use(cors({
+  origin: FRONTEND_URL,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Authorization", "Content-Type"],
+  credentials: true
+}));
 app.use(express.json());
 
 const SECRET_KEY = '8gapp-secret-key'; // In prod, use env var
@@ -656,7 +664,7 @@ app.post('/api/rosettes/assign', authenticateToken, (req, res) => {
 });
 
 // --- Start Server ---
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });

@@ -62,7 +62,7 @@ const TeacherDashboard: React.FC = () => {
   const [studentRank, setStudentRank] = useState<number | null>(null);
   const [studentRosettes, setStudentRosettes] = useState<any[]>([]);
 
-  // Removed pomodoro timers from teacher panel
+ 
 
   const fetchStudentStats = async (id: number) => {
     try {
@@ -139,7 +139,7 @@ const TeacherDashboard: React.FC = () => {
   // Live update student points
   const socketRef = useRef<Socket | null>(null);
   useEffect(() => {
-    socketRef.current = io('http://localhost:3000');
+    socketRef.current = io(((import.meta as any).env?.VITE_BACKEND_URL) || 'http://localhost:3000');
     socketRef.current.on('points_updated', (payload: { student_id: number; amount: number }) => {
       const { student_id, amount } = payload;
       setStudents(prev => prev.map(s => {

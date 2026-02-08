@@ -53,7 +53,7 @@ const StudentDashboard: React.FC = () => {
   // Live update points on socket event
   const socketRef = useRef<Socket | null>(null);
   useEffect(() => {
-    socketRef.current = io('http://localhost:3000');
+    socketRef.current = io(((import.meta as any).env?.VITE_BACKEND_URL) || 'http://localhost:3000');
     socketRef.current.on('points_updated', async (payload: any) => {
       if (payload.student_id === user?.id) {
         const amt = Number(payload.amount) || 0;

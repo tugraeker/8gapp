@@ -2,7 +2,8 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const bcrypt = require('bcryptjs');
 
-const dbPath = path.resolve(__dirname, '8gapp.db');
+const envDbPath = process.env.DB_PATH || process.env.DB_FILE;
+const dbPath = envDbPath ? path.resolve(envDbPath) : path.resolve(__dirname, '8gapp.db');
 
 const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
