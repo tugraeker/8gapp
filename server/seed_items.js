@@ -1,19 +1,14 @@
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
-
-const dbPath = path.resolve(__dirname, '8gapp.db');
-const db = new sqlite3.Database(dbPath);
+const db = require('./database');
 
 const ITEMS = [
     // Avatars (Styles) - These act as "unlocks" or "skins"
     { name: "Robot Avatar Paketi", category: "avatar", cost: 50, asset_id: "bottts" },
-    { name: "Kedi Avatar Paketi", category: "avatar", cost: 75, asset_id: "kitten" }, // Valid DiceBear style? No, kitten is not default v7. Let's stick to v7 supported.
-    // Actually, let's check DiceBear v7 styles: avataaars, bottts, fun-emoji, icons, identicon, lorelei, notionists, open-peeps, personas, pixel-art, shapes, thumbs
+    { name: "Kedi Avatar Paketi", category: "avatar", cost: 75, asset_id: "kitten" }, 
     { name: "Canavar Avatar Paketi", category: "avatar", cost: 60, asset_id: "fun-emoji" },
     { name: "Maceralı Avatar Paketi", category: "avatar", cost: 80, asset_id: "adventurer" },
     { name: "Çizim Avatar Paketi", category: "avatar", cost: 100, asset_id: "notionists" },
     
-    // Backgrounds / Themes (Future implementation, but let's sell them)
+    // Backgrounds / Themes
     { name: "Karanlık Mod", category: "theme", cost: 150, asset_id: "theme_dark" },
     { name: "Uzay Teması", category: "theme", cost: 200, asset_id: "theme_space" },
     
@@ -23,15 +18,23 @@ const ITEMS = [
     { name: "Öğretmen Masasında Oturma", category: "perk", cost: 1000, asset_id: "perk_sit" }
 ];
 
-db.serialize(() => {
-    db.run("DELETE FROM items"); // Clear old items to avoid duplicates
-    db.run("DELETE FROM sqlite_sequence WHERE name='items'");
+async function seed() {
+    try {
+        await db.run("DELETE FROM items"); 
+        // Reset ID sequence in Postgres (if using SERIAL)
+        await db.run("ALTER SEQUENCE items_id_seq RESTART WITH 1");
 
-    const stmt = db.prepare("INSERT INTO items (name, category, cost, asset_id) VALUES (?, ?, ?, ?)");
-    ITEMS.forEach(item => {
-        stmt.run(item.name, item.category, item.cost, item.asset_id);
-    });
-    stmt.finalize();
-    console.log(`Seeded ${ITEMS.length} items into the shop.`);
-    db.close();
-});
+        for (const item of ITEMS) {
+            await db.run("INSERT INTO items (name, category, cost, asset_id) VALUES ($1, $2, $3, $4)", 
+                [item.name, item.category, item.cost, item.asset_id]);
+        }
+        
+        console.log(`Seeded ${ITEMS.length} items into the shop.`);
+        process.exit(0);
+    } catch (err) {
+        console.error("Seeding error:", err);
+        process.exit(1);
+    }
+}
+
+seed();
