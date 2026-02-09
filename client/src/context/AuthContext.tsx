@@ -11,6 +11,12 @@ export interface User {
     total_points: number;
     spendable_points: number;
   };
+  level?: {
+    level: number;
+    name: string;
+    next: number;
+    min: number;
+  };
   first_login?: boolean;
   birth_date?: string;
 }

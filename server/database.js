@@ -7,19 +7,17 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-// Helper for single row
+// Yardımcı Fonksiyonlar
 const get = async (text, params) => {
   const res = await pool.query(text, params);
   return res.rows[0];
 };
 
-// Helper for all rows
 const all = async (text, params) => {
   const res = await pool.query(text, params);
   return res.rows;
 };
 
-// Helper for execution (returns result object)
 const run = async (text, params) => {
   return await pool.query(text, params);
 };
@@ -38,16 +36,15 @@ function generateCredentials(fullName) {
   const parts = fullName.split(' ');
   const firstName = parts[0].toLowerCase().replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c');
   const lastNameInitial = parts[parts.length - 1][0].toLowerCase().replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c');
-  
   const username = `${firstName}.${lastNameInitial}`;
   const passwordPlain = `sifre${Math.floor(1000 + Math.random() * 9000)}`;
-  
   return { username, passwordPlain };
 }
 
+// Veritabanı Başlatma Fonksiyonu
 const initDatabase = async () => {
   try {
-    // Tables
+    // Tabloları Sırayla Oluştur
     await pool.query(`CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
       username TEXT UNIQUE,
@@ -61,167 +58,119 @@ const initDatabase = async () => {
     )`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS points (
-      user_id INTEGER PRIMARY KEY,
+      user_id INTEGER PRIMARY KEY REFERENCES users(id),
       total_points INTEGER DEFAULT 0,
-      spendable_points INTEGER DEFAULT 0,
-      FOREIGN KEY(user_id) REFERENCES users(id)
+      spendable_points INTEGER DEFAULT 0
     )`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS transactions (
       id SERIAL PRIMARY KEY,
-      from_user_id INTEGER,
-      to_user_id INTEGER,
+      from_user_id INTEGER REFERENCES users(id),
+      to_user_id INTEGER REFERENCES users(id),
       amount INTEGER,
       reason TEXT,
       type TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(from_user_id) REFERENCES users(id),
-      FOREIGN KEY(to_user_id) REFERENCES users(id)
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    await pool.query(`CREATE TABLE IF NOT EXISTS messages (
-      id SERIAL PRIMARY KEY,
-      sender_id INTEGER,
-      content TEXT,
-      group_type TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(sender_id) REFERENCES users(id)
-    )`);
-
-    await pool.query(`CREATE TABLE IF NOT EXISTS items (
-      id SERIAL PRIMARY KEY,
-      name TEXT,
-      category TEXT,
-      cost INTEGER,
-      asset_id TEXT
-    )`);
-
-    await pool.query(`CREATE TABLE IF NOT EXISTS user_items (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER,
-      item_id INTEGER,
-      is_equipped BOOLEAN DEFAULT FALSE,
-      FOREIGN KEY(user_id) REFERENCES users(id),
-      FOREIGN KEY(item_id) REFERENCES items(id)
-    )`);
+    // Diğer Tablolar (Messages, Items vb.)
+    await pool.query(`CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, sender_id INTEGER REFERENCES users(id), content TEXT, group_type TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS items (id SERIAL PRIMARY KEY, name TEXT, category TEXT, cost INTEGER, asset_id TEXT)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS user_items (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id), item_id INTEGER REFERENCES items(id), is_equipped BOOLEAN DEFAULT FALSE)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS rosettes (id SERIAL PRIMARY KEY, name TEXT, description TEXT, icon TEXT)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS user_rosettes (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id), rosette_id INTEGER REFERENCES rosettes(id), awarded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS user_wardrobe (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id), name TEXT, config TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS notifications (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id), message TEXT, read BOOLEAN DEFAULT FALSE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS teacher_notes (id SERIAL PRIMARY KEY, student_id INTEGER REFERENCES users(id), note TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, title TEXT, content TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS daily_spins (user_id INTEGER PRIMARY KEY REFERENCES users(id), last_spin_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
     
-    await pool.query(`CREATE TABLE IF NOT EXISTS rosettes (
+    // Attendance Table
+    await pool.query(`CREATE TABLE IF NOT EXISTS attendance (
       id SERIAL PRIMARY KEY,
-      name TEXT,
+      student_id INTEGER REFERENCES users(id),
+      status TEXT DEFAULT 'present', -- 'present' (okulda), 'absent' (yok)
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    // Daily Missions Table
+    await pool.query(`CREATE TABLE IF NOT EXISTS daily_missions (
+      id SERIAL PRIMARY KEY,
+      title TEXT,
       description TEXT,
-      icon TEXT
+      points_reward INTEGER,
+      type TEXT, -- 'spin', 'chat', 'attendance'
+      created_at DATE DEFAULT CURRENT_DATE
     )`);
 
-    await pool.query(`CREATE TABLE IF NOT EXISTS user_rosettes (
+    await pool.query(`CREATE TABLE IF NOT EXISTS user_missions (
       id SERIAL PRIMARY KEY,
-      user_id INTEGER,
-      rosette_id INTEGER,
-      awarded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(user_id) REFERENCES users(id),
-      FOREIGN KEY(rosette_id) REFERENCES rosettes(id)
+      user_id INTEGER REFERENCES users(id),
+      mission_id INTEGER REFERENCES daily_missions(id),
+      status TEXT DEFAULT 'pending', -- 'pending', 'completed'
+      completed_at TIMESTAMP,
+      UNIQUE(user_id, mission_id)
     )`);
 
-    await pool.query(`CREATE TABLE IF NOT EXISTS user_wardrobe (
+    // Polls Table
+    await pool.query(`CREATE TABLE IF NOT EXISTS polls (
       id SERIAL PRIMARY KEY,
-      user_id INTEGER,
-      name TEXT,
-      config TEXT,
+      question TEXT,
+      options JSONB, -- ['Option 1', 'Option 2']
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(user_id) REFERENCES users(id)
+      expires_at TIMESTAMP
     )`);
 
-    await pool.query(`CREATE TABLE IF NOT EXISTS notifications (
+    await pool.query(`CREATE TABLE IF NOT EXISTS poll_votes (
       id SERIAL PRIMARY KEY,
-      user_id INTEGER,
-      message TEXT,
-      read BOOLEAN DEFAULT FALSE,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(user_id) REFERENCES users(id)
-    )`);
-    
-    await pool.query(`CREATE TABLE IF NOT EXISTS teacher_notes (
-      id SERIAL PRIMARY KEY,
-      student_id INTEGER,
-      note TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(student_id) REFERENCES users(id)
+      poll_id INTEGER REFERENCES polls(id),
+      user_id INTEGER REFERENCES users(id),
+      option_index INTEGER,
+      voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(poll_id, user_id)
     )`);
 
     // Seed Rosettes
-    const ROSETTES = [
-        { name: "Kitap Kurdu", description: "Çok kitap okuyan öğrenci", icon: "📚" },
-        { name: "Yardımsever", description: "Arkadaşlarına yardım eden", icon: "🤝" },
-        { name: "Temizlik Elçisi", description: "Sınıf temizliğine önem veren", icon: "🧹" },
-        { name: "Yıldız Öğrenci", description: "Örnek davranış sergileyen", icon: "⭐" },
-        { name: "Ödev Şampiyonu", description: "Ödevlerini düzenli yapan", icon: "📝" },
-        { name: "Sınıf Başkanı", description: "Sınıf düzenini sağlayan", icon: "👑" },
-        { name: "Sporcu", description: "Sportif başarısı olan", icon: "⚽" },
-        { name: "Sanatçı", description: "Sanatsal yeteneği olan", icon: "🎨" }
-    ];
-
-    const rosettesCount = await get("SELECT count(*) as count FROM rosettes");
-    if (parseInt(rosettesCount.count) === 0) {
+    const rosettesCheck = await get("SELECT count(*) FROM rosettes");
+    if (parseInt(rosettesCheck.count) === 0) {
+        const ROSETTES = [
+            { name: "Kitap Kurdu", description: "Çok kitap okuyan öğrenci", icon: "📚" },
+            { name: "Yardımsever", description: "Arkadaşlarına yardım eden", icon: "🤝" },
+            { name: "Temizlik Elçisi", description: "Sınıf temizliğine önem veren", icon: "🧹" },
+            { name: "Yıldız Öğrenci", description: "Örnek davranış sergileyen", icon: "⭐" },
+            { name: "Ödev Şampiyonu", description: "Ödevlerini düzenli yapan", icon: "📝" }
+        ];
         for (const r of ROSETTES) {
             await pool.query("INSERT INTO rosettes (name, description, icon) VALUES ($1, $2, $3)", [r.name, r.description, r.icon]);
         }
-        console.log("Rosettes seeded");
-    }
-
-    // Seed Items
-    const ITEMS = [
-      { name: "Robot Avatar Paketi", category: "avatar", cost: 50, asset_id: "bottts" },
-      { name: "Canavar Avatar Paketi", category: "avatar", cost: 60, asset_id: "fun-emoji" },
-      { name: "Open-Peeps Paketi", category: "avatar", cost: 80, asset_id: "open-peeps" },
-      { name: "Notionists Paketi", category: "avatar", cost: 100, asset_id: "notionists" },
-      { name: "Karanlık Mod", category: "theme", cost: 150, asset_id: "theme_dark" },
-      { name: "Uzay Teması", category: "theme", cost: 200, asset_id: "theme_space" },
-      { name: "Ödev Muafiyeti", category: "perk", cost: 500, asset_id: "perk_homework" },
-      { name: "Ders Boyunca Müzik", category: "perk", cost: 300, asset_id: "perk_music" },
-      { name: "Öğretmen Masasında Oturma", category: "perk", cost: 1000, asset_id: "perk_sit" }
-    ];
-
-    const itemsCount = await get("SELECT count(*) as count FROM items");
-    if (parseInt(itemsCount.count) === 0) {
-      for (const it of ITEMS) {
-        await pool.query("INSERT INTO items (name, category, cost, asset_id) VALUES ($1, $2, $3, $4)", [it.name, it.category, it.cost, it.asset_id]);
-      }
-      console.log("Shop items seeded");
     }
 
     // Seed Teacher
-    const teacherUsername = 'ogretmen_8g';
-    const teacherPassword = '8G_Ogretmen2025!';
-
-    const teacher = await get("SELECT * FROM users WHERE username = $1", [teacherUsername]);
+    const teacher = await get("SELECT * FROM users WHERE username = $1", ['ogretmen_8g']);
     if (!teacher) {
-      const hash = bcrypt.hashSync(teacherPassword, 10);
-      await pool.query("INSERT INTO users (username, password, role, name) VALUES ($1, $2, $3, $4)", 
-        [teacherUsername, hash, 'teacher', 'Öğretmen']);
-      console.log(`Teacher account created: ${teacherUsername}`);
+      const hash = bcrypt.hashSync('8G_Ogretmen2025!', 10);
+      await pool.query("INSERT INTO users (username, password, role, name) VALUES ($1, $2, $3, $4)", ['ogretmen_8g', hash, 'teacher', 'Öğretmen']);
     }
 
     // Seed Students
     for (const name of STUDENTS) {
-      const { username, passwordPlain } = generateCredentials(name);
       const student = await get("SELECT * FROM users WHERE name = $1", [name]);
-      
       if (!student) {
+        const { username, passwordPlain } = generateCredentials(name);
         const hash = bcrypt.hashSync(passwordPlain, 10);
-        const res = await pool.query("INSERT INTO users (username, password, role, name) VALUES ($1, $2, 'student', $3) RETURNING id", 
-          [username, hash, name]);
-        const newUserId = res.rows[0].id;
-        
-        await pool.query("INSERT INTO points (user_id, total_points, spendable_points) VALUES ($1, 0, 0)", [newUserId]);
+        const res = await pool.query("INSERT INTO users (username, password, role, name) VALUES ($1, $2, 'student', $3) RETURNING id", [username, hash, name]);
+        await pool.query("INSERT INTO points (user_id, total_points, spendable_points) VALUES ($1, 0, 0)", [res.rows[0].id]);
         console.log(`Student created: ${name} (${username} / ${passwordPlain})`);
       }
     }
 
-    console.log("Database initialized");
+    console.log("Database initialized successfully!");
   } catch (err) {
     console.error("Database initialization error:", err);
   }
 };
 
+// MODUL EXPORTS HER ZAMAN EN SONDA OLMALI
 module.exports = {
   pool,
   get,

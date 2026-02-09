@@ -5,6 +5,7 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const cron = require('node-cron');
 const db = require('./database');
 
 const app = express();
@@ -26,10 +27,78 @@ app.use(cors({
 }));
 app.use(express.json());
 
-const SECRET_KEY = '8gapp-secret-key'; // In prod, use env var
+const SECRET_KEY = process.env.JWT_SECRET || '8gapp-secret-key';
+
+// Seviye hesaplama mantığı
+const calculateLevel = (totalPoints) => {
+  if (totalPoints < 250) return { level: 1, name: "Çaylak", next: 250, min: 0 };
+  if (totalPoints < 750) return { level: 2, name: "Öğrenci", next: 750, min: 250 };
+  if (totalPoints < 1500) return { level: 3, name: "Bilgin", next: 1500, min: 750 };
+  if (totalPoints < 3000) return { level: 4, name: "Üstat", next: 3000, min: 1500 };
+  return { level: 5, name: "Efsane", next: 99999, min: 3000 };
+};
+
+// Günlük Görevleri Başlat
+const initDailyMissions = async () => {
+  const today = new Date().toISOString().split('T')[0];
+  try {
+    const existing = await db.get("SELECT count(*) FROM daily_missions WHERE created_at = $1", [today]);
+    if (parseInt(existing.count) === 0) {
+      const missions = [
+        { title: "Güne Merhaba", description: "Bugün okula gelerek yoklamaya katıl!", points: 10, type: "attendance" },
+        { title: "Şanslı Gün", description: "Günün şans çarkını çevir!", points: 5, type: "spin" },
+        { title: "Sohbet Saati", description: "Grup sohbetine bir mesaj yaz!", points: 5, type: "chat" }
+      ];
+      for (const m of missions) {
+        await db.run("INSERT INTO daily_missions (title, description, points_reward, type, created_at) VALUES ($1, $2, $3, $4, $5)", 
+          [m.title, m.description, m.points, m.type, today]);
+      }
+    }
+  } catch (err) {
+    console.error("Görev Başlatma Hatası:", err.message);
+  }
+};
+
+// Görev Tamamlama Kontrolü
+const checkMissionCompletion = async (userId, type) => {
+  const today = new Date().toISOString().split('T')[0];
+  try {
+    const mission = await db.get("SELECT id, points_reward FROM daily_missions WHERE type = $1 AND created_at = $2", [type, today]);
+    if (mission) {
+      const userMission = await db.get("SELECT status FROM user_missions WHERE user_id = $1 AND mission_id = $2", [userId, mission.id]);
+      if (!userMission || userMission.status === 'pending') {
+        await db.run("INSERT INTO user_missions (user_id, mission_id, status, completed_at) VALUES ($1, $2, 'completed', CURRENT_TIMESTAMP) ON CONFLICT (user_id, mission_id) DO UPDATE SET status = 'completed', completed_at = CURRENT_TIMESTAMP", [userId, mission.id]);
+        
+        // Ödülü Ver
+        await db.run("UPDATE points SET total_points = total_points + $1, spendable_points = spendable_points + $1 WHERE user_id = $2", [mission.points_reward, userId]);
+        
+        const updated = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [userId]);
+        io.emit('points_updated', { student_id: userId, total_points: updated.total_points, spendable_points: updated.spendable_points, amount: mission.points_reward });
+        io.to(`user_${userId}`).emit('notification', { message: `Görev Tamamlandı: ${mission.points_reward} puan kazandın!` });
+      }
+    }
+  } catch (err) {
+    console.error("Görev Tamamlama Hatası:", err.message);
+  }
+};
+
+// Server başlatıldığında görevleri kur
+initDailyMissions();
 
 // Initialize Database
 db.initDatabase();
+
+// --- Attendance Reset Task (Every 12 hours) ---
+// Her 12 saatte bir çalışır ve yoklamayı sıfırlar (tüm öğrencileri 'present' yapar)
+cron.schedule('0 */12 * * *', async () => {
+  console.log('--- YOKLAMA SIFIRLAMA BAŞLATILDI ---');
+  try {
+    await db.run("UPDATE attendance SET status = 'present', updated_at = NOW()");
+    console.log('Yoklama başarıyla sıfırlandı.');
+  } catch (err) {
+    console.error('Yoklama sıfırlama hatası:', err);
+  }
+});
 
 // Middleware to authenticate token
 const authenticateToken = (req, res, next) => {
@@ -49,16 +118,38 @@ const authenticateToken = (req, res, next) => {
 
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
+  const normalizedUsername = String(username).toLowerCase().trim();
   
   try {
-    const user = await db.get("SELECT * FROM users WHERE username = $1", [username]);
+    const user = await db.get("SELECT * FROM users WHERE LOWER(username) = $1", [normalizedUsername]);
     if (!user) return res.status(400).send('User not found');
 
-    const validPassword = bcrypt.compareSync(password, user.password);
+    const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) return res.status(400).send('Invalid password');
 
+    let pointsObj = { total_points: 0, spendable_points: 0 };
+    let levelObj = { level: 1, name: "Çaylak", next: 250, min: 0 };
+    if (user.role === 'student') {
+      const p = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [user.id]);
+      if (p) {
+        pointsObj = { total_points: p.total_points, spendable_points: p.spendable_points };
+        levelObj = calculateLevel(p.total_points);
+      }
+    }
+
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role, name: user.name }, SECRET_KEY);
-    res.json({ token, user: { id: user.id, username: user.username, role: user.role, name: user.name, avatar_config: JSON.parse(user.avatar_config) } });
+    res.json({ 
+      token, 
+      user: { 
+        id: user.id, 
+        username: user.username, 
+        role: user.role, 
+        name: user.name, 
+        avatar_config: JSON.parse(user.avatar_config || '{}'),
+        points: pointsObj,
+        level: levelObj
+      } 
+    });
   } catch (err) {
     res.status(500).send(err.message);
   }
@@ -69,12 +160,16 @@ app.get('/api/me', authenticateToken, async (req, res) => {
     const user = await db.get("SELECT id, username, role, name, avatar_config, birth_date, first_login FROM users WHERE id = $1", [req.user.id]);
     if (!user) return res.status(404).send('User not found');
     
-    // Get points if student
     if (user.role === 'student') {
         const points = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [user.id]);
-        user.points = points || { total_points: 0, spendable_points: 0 };
+        user.points = {
+          total_points: points ? points.total_points : 0,
+          spendable_points: points ? points.spendable_points : 0
+        };
+        user.level = calculateLevel(user.points.total_points);
     }
     
+    // Avatar parse işlemleri...
     try {
       const parsed = JSON.parse(user.avatar_config || '{}');
       user.avatar_config = Object.keys(parsed).length === 0 ? null : parsed;
@@ -105,6 +200,21 @@ app.post('/api/me/avatar', authenticateToken, async (req, res) => {
       res.json({ success: true });
     } catch (e) {
       return res.status(400).json({ error: 'Geçersiz avatar yapılandırması' });
+    }
+});
+
+app.post('/api/me/password', authenticateToken, async (req, res) => {
+    const { current_password, new_password } = req.body;
+    try {
+      const user = await db.get("SELECT password FROM users WHERE id = $1", [req.user.id]);
+      const valid = await bcrypt.compare(current_password, user.password);
+      if (!valid) return res.status(400).json({ error: 'Mevcut şifre yanlış' });
+      
+      const hash = await bcrypt.hash(new_password, 10);
+      await db.run("UPDATE users SET password = $1 WHERE id = $2", [hash, req.user.id]);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).send(err.message);
     }
 });
 
@@ -184,6 +294,17 @@ app.post('/api/items/buy', authenticateToken, async (req, res) => {
       await db.run("INSERT INTO transactions (from_user_id, to_user_id, amount, reason, type) VALUES ($1, $2, $3, $4, 'shop')", 
           [req.user.id, null, -item.cost, `Satın alma: ${item.name}`]);
       
+      // Get updated points for socket
+      const updatedPoints = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [req.user.id]);
+      if (updatedPoints) {
+        io.emit('points_updated', { 
+          student_id: req.user.id, 
+          total_points: updatedPoints.total_points, 
+          spendable_points: updatedPoints.spendable_points,
+          amount: -item.cost 
+        });
+      }
+      
       res.json({ success: true, message: 'Satın alındı' });
     } catch (err) {
       res.status(500).send(err.message);
@@ -201,6 +322,18 @@ app.post('/api/spendable/add', authenticateToken, async (req, res) => {
     await db.run("UPDATE points SET spendable_points = spendable_points + $1 WHERE user_id = $2", [amt, user_id]);
     await db.run("INSERT INTO transactions (from_user_id, to_user_id, amount, reason, type) VALUES ($1, $2, $3, $4, 'bonus')", 
       [req.user.id, user_id, amt, reason || 'Bonus / Pomodoro']);
+    
+    // Get updated points for socket
+    const updatedPoints = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [user_id]);
+    if (updatedPoints) {
+      io.emit('points_updated', { 
+        student_id: user_id, 
+        total_points: updatedPoints.total_points, 
+        spendable_points: updatedPoints.spendable_points,
+        amount: amt 
+      });
+    }
+
     res.json({ success: true, amount: amt });
   } catch (err) {
     res.status(500).send(err.message);
@@ -275,7 +408,7 @@ app.get('/api/leaderboard/weeklyTop', authenticateToken, async (req, res) => {
            AND t.type = 'academic' 
            AND t.created_at >= NOW() - INTERVAL '7 days'
           WHERE u.role = 'student'
-          GROUP BY u.id
+          GROUP BY u.id, u.name, u.username, u.avatar_config
           ORDER BY weekly_points DESC
           LIMIT 1
       `);
@@ -327,23 +460,42 @@ app.post('/api/students', authenticateToken, async (req, res) => {
 // Get All Students
 app.get('/api/students', authenticateToken, async (req, res) => {
   try {
+    // db.all kullanıyoruz, sadece 'all' değil!
     const rows = await db.all(`
-      SELECT u.id, u.name, u.username, u.avatar_config, u.birth_date, p.total_points, p.spendable_points 
+      SELECT 
+        u.id, u.name, u.username, u.avatar_config, u.birth_date, 
+        COALESCE(p.total_points, 0) as total_points, 
+        COALESCE(p.spendable_points, 0) as spendable_points
       FROM users u 
       LEFT JOIN points p ON u.id = p.user_id 
-      WHERE u.role = 'student'`);
-      
+      WHERE u.role = 'student'
+      ORDER BY u.name ASC
+    `);
+    
+    // Değişkeni burada tanımlıyoruz
     const students = rows.map(r => {
-      let parsed = {};
+      let avatarConfig = null;
       try {
-        parsed = JSON.parse(r.avatar_config || '{}');
-      } catch {
-        parsed = {};
+        // avatar_config boşsa veya bozuksa patlamasın diye önlem
+        avatarConfig = (typeof r.avatar_config === 'string' && r.avatar_config.trim() !== "") 
+          ? JSON.parse(r.avatar_config) 
+          : r.avatar_config;
+      } catch (e) {
+        avatarConfig = null;
       }
-      return {...r, avatar_config: Object.keys(parsed).length === 0 ? null : parsed};
+      return {
+        ...r,
+        points: {
+          total_points: r.total_points,
+          spendable_points: r.spendable_points
+        },
+        avatar_config: avatarConfig
+      };
     });
+
     res.json(students);
   } catch (err) {
+    console.error("ÖĞRENCİ LİSTESİ HATASI:", err.message);
     res.status(500).send(err.message);
   }
 });
@@ -351,63 +503,67 @@ app.get('/api/students', authenticateToken, async (req, res) => {
 // Give Points (any authenticated user can give points)
 app.post('/api/points', authenticateToken, async (req, res) => {
   const { student_id, amount, reason } = req.body; 
-
-  const parseAmount = (val) => {
-    const s = String(val).trim();
-    const matched = s.match(/^([+-]?)(\d+)$/);
-    if (!matched) return NaN;
-    const sign = matched[1] === '-' ? -1 : 1;
-    return sign * parseInt(matched[2], 10);
-  };
+  const parsedAmount = parseInt(amount) || 0;
 
   const givePoints = async (uid, amt, rsn) => {
-      let totalChange = 0;
-      let spendableChange = 0;
+    try {
+      // 1. Puan satırı var mı kontrol et, yoksa 0 ile oluştur (PostgreSQL ON CONFLICT)
+      await db.run(`
+        INSERT INTO points (user_id, total_points, spendable_points) 
+        VALUES ($1, 0, 0) 
+        ON CONFLICT (user_id) DO NOTHING`, [uid]);
 
-      if (amt > 0) {
-          totalChange = amt;
-          spendableChange = amt;
-      } else {
-          totalChange = amt; 
-          spendableChange = 0;
-      }
+      // 2. PUANI GÜNCELLE (db.run üzerinden dönen sonucu alıyoruz)
+      // Sadece pozitif puanlar harcama puanını artırmalıdır (isteğe bağlı ama genellikle akademik puanlar pozitiftir)
+      const updateQuery = `
+        UPDATE points 
+        SET total_points = total_points + $1, 
+            spendable_points = spendable_points + $1 
+        WHERE user_id = $2 
+        RETURNING total_points, spendable_points`;
       
-      // Ensure points row exists
-      const row = await db.get("SELECT * FROM points WHERE user_id = $1", [uid]);
-      if (!row) {
-        await db.run("INSERT INTO points (user_id, total_points, spendable_points) VALUES ($1, 0, 0)", [uid]);
-      }
-      
-      await db.run(`UPDATE points SET total_points = total_points + $1, spendable_points = spendable_points + $2 WHERE user_id = $3`, 
-          [totalChange, spendableChange, uid]);
+      const updateRes = await db.run(updateQuery, [amt, uid]);
+      const updated = updateRes.rows[0];
 
-      // Log transaction
-      await db.run("INSERT INTO transactions (from_user_id, to_user_id, amount, reason, type) VALUES ($1, $2, $3, $4, 'academic')", 
-          [req.user.id, uid, amt, rsn]);
-          
-      // Emit socket event
-      io.emit('points_updated', { student_id: uid, amount: amt });
+      // 3. Log kaydı
+      await db.run(
+        "INSERT INTO transactions (from_user_id, to_user_id, amount, reason, type) VALUES ($1, $2, $3, $4, 'academic')",
+        [req.user.id, uid, amt, rsn]
+      );
+
+      // 4. Socket ile anlık gönder
+      io.emit('points_updated', { 
+        student_id: uid, 
+        total_points: updated.total_points, 
+        spendable_points: updated.spendable_points,
+        amount: amt 
+      });
+
+      return { ...updated, amount: amt };
+    } catch (e) {
+      console.error("Puan Verme Hatası:", e.message);
+      throw e;
+    }
   };
-
-  const parsedAmount = parseAmount(amount);
-  if (Number.isNaN(parsedAmount)) {
-    return res.status(400).json({ error: 'Geçersiz puan formatı' });
-  }
 
   try {
     if (student_id === 'all') {
-        const rows = await db.all("SELECT id FROM users WHERE role = 'student'");
-        for (const row of rows) {
-          await givePoints(row.id, parsedAmount, reason);
-        }
-        res.json({ success: true, message: 'Tüm öğrencilere puan verildi', amount: parsedAmount });
+      const rows = await db.all(`
+        SELECT u.id 
+        FROM users u
+        LEFT JOIN attendance a ON u.id = a.student_id
+        WHERE u.role = 'student' AND (a.status IS NULL OR a.status = 'present')
+      `);
+      for (const row of rows) {
+        await givePoints(row.id, parsedAmount, reason);
+      }
+      res.json({ success: true, message: 'Toplu puan verildi (Sadece okulda olanlara)' });
     } else {
-        await givePoints(student_id, parsedAmount, reason);
-        const row = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [student_id]);
-        res.json({ success: true, amount: parsedAmount, points: row || { total_points: 0, spendable_points: 0 } });
+      const finalPoints = await givePoints(student_id, parsedAmount, reason);
+      res.json({ success: true, points: finalPoints });
     }
   } catch (err) {
-    res.status(500).send(err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -428,11 +584,11 @@ app.get('/api/transactions', authenticateToken, async (req, res) => {
   const params = [];
   let pIdx = 1;
 
-  if (type) { conditions.push(`type = $${pIdx++}`); params.push(type); }
-  if (from_user_id) { conditions.push(`from_user_id = $${pIdx++}`); params.push(from_user_id); }
-  if (to_user_id) { conditions.push(`to_user_id = $${pIdx++}`); params.push(to_user_id); }
-  if (start) { conditions.push(`created_at >= $${pIdx++}`); params.push(start); }
-  if (end) { conditions.push(`created_at <= $${pIdx++}`); params.push(end); }
+  if (type) { conditions.push(`t.type = $${pIdx++}`); params.push(type); }
+  if (from_user_id) { conditions.push(`t.from_user_id = $${pIdx++}`); params.push(from_user_id); }
+  if (to_user_id) { conditions.push(`t.to_user_id = $${pIdx++}`); params.push(to_user_id); }
+  if (start) { conditions.push(`t.created_at >= $${pIdx++}`); params.push(start); }
+  if (end) { conditions.push(`t.created_at <= $${pIdx++}`); params.push(end); }
   
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const sql = `
@@ -500,6 +656,12 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
       };
       
       io.emit('new_message', message);
+      
+      // Görev kontrolü
+      if (req.user.role === 'student') {
+        await checkMissionCompletion(req.user.id, 'chat');
+      }
+      
       res.json(message);
     } catch (err) {
       res.status(500).send(err.message);
@@ -559,13 +721,62 @@ app.post('/api/notifications/read', authenticateToken, async (req, res) => {
   }
 });
 
+// --- Attendance Routes ---
+app.get('/api/attendance', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'teacher') return res.sendStatus(403);
+  try {
+    const rows = await db.all("SELECT * FROM attendance");
+    res.json(rows);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+app.post('/api/attendance/start', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'teacher') return res.sendStatus(403);
+  try {
+    // Mevcut tüm öğrencileri yoklamaya ekle veya durumlarını 'present' yap
+    const students = await db.all("SELECT id FROM users WHERE role = 'student'");
+    for (const s of students) {
+      await db.run(`
+        INSERT INTO attendance (student_id, status, updated_at) 
+        VALUES ($1, 'present', NOW())
+        ON CONFLICT (student_id) DO UPDATE SET status = 'present', updated_at = NOW()
+      `, [s.id]);
+      // Görev kontrolü
+      await checkMissionCompletion(s.id, 'attendance');
+    }
+    io.emit('attendance_started');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+app.post('/api/attendance/toggle', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'teacher') return res.sendStatus(403);
+  const { student_id, status } = req.body;
+  try {
+    await db.run("UPDATE attendance SET status = $1, updated_at = NOW() WHERE student_id = $2", [status, student_id]);
+    
+    // Eğer 'present' yapıldıysa görev kontrolü
+    if (status === 'present') {
+      await checkMissionCompletion(student_id, 'attendance');
+    }
+    
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
 // --- Weekly Points for current user ---
 app.get('/api/me/weeklyPoints', authenticateToken, async (req, res) => {
   try {
     const row = await db.get(`
       SELECT COALESCE(SUM(amount),0) as weekly_points
       FROM transactions
-      WHERE to_user_id = $1 AND type = 'academic' AND created_at >= NOW() - INTERVAL '7 days'
+      WHERE to_user_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
     `, [req.user.id]);
     res.json({ weekly_points: row.weekly_points });
   } catch (err) {
@@ -624,7 +835,7 @@ app.get('/api/me/weeklyPointsDetailed', authenticateToken, async (req, res) => {
     const rows = await db.all(`
       SELECT created_at::date as day, COALESCE(SUM(amount),0) as points
       FROM transactions
-      WHERE to_user_id = $1 AND type = 'academic' AND created_at >= CURRENT_DATE - INTERVAL '6 days'
+      WHERE to_user_id = $1 AND created_at >= CURRENT_DATE - INTERVAL '6 days'
       GROUP BY day
       ORDER BY day ASC
     `, [req.user.id]);
@@ -710,5 +921,175 @@ app.post('/api/rosettes/assign', authenticateToken, async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
+});
+
+// --- Yeni Özellikler: Duyuru ve Günlük Çark ---
+
+// Duyuruları Getir
+app.get('/api/announcements', authenticateToken, async (req, res) => {
+  try {
+    const rows = await db.all("SELECT * FROM announcements ORDER BY created_at DESC LIMIT 10");
+    res.json(rows);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+// Duyuru Ekle (Sadece Öğretmen)
+app.post('/api/announcements', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'teacher') return res.sendStatus(403);
+  const { title, content } = req.body;
+  try {
+    const result = await db.run("INSERT INTO announcements (title, content) VALUES ($1, $2) RETURNING id", [title, content]);
+    res.json({ id: result.rows[0].id, title, content, created_at: new Date() });
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+// Günlük Çark (Sadece Öğrenci)
+app.post('/api/daily-spin', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'student') return res.sendStatus(403);
+  
+  try {
+    const lastSpin = await db.get("SELECT last_spin_at FROM daily_spins WHERE user_id = $1", [req.user.id]);
+    const now = new Date();
+    
+    if (lastSpin) {
+      const lastDate = new Date(lastSpin.last_spin_at);
+      const hoursDiff = (now.getTime() - lastDate.getTime()) / (1000 * 60 * 60);
+      if (hoursDiff < 24) {
+        const remaining = 24 - hoursDiff;
+        return res.status(400).json({ 
+          error: `Günde sadece bir kez çevirebilirsin.`,
+          remaining_hours: Math.ceil(remaining)
+        });
+      }
+    }
+
+    // Olası ödüller: 5, 10, 20, 50 puan
+    const rewards = [5, 5, 5, 5, 10, 10, 10, 20, 20, 50];
+    const prize = rewards[Math.floor(Math.random() * rewards.length)];
+
+    // Puanı ekle
+    await db.run("UPDATE points SET spendable_points = spendable_points + $1 WHERE user_id = $2", [prize, req.user.id]);
+    
+    // Çevirme zamanını kaydet
+    await db.run("INSERT INTO daily_spins (user_id, last_spin_at) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET last_spin_at = $2", [req.user.id, now]);
+    
+    // Görev kontrolü
+    await checkMissionCompletion(req.user.id, 'spin');
+    
+    // Log kaydı
+    await db.run("INSERT INTO transactions (from_user_id, to_user_id, amount, reason, type) VALUES ($1, $2, $3, $4, 'bonus')", 
+      [req.user.id, req.user.id, prize, 'Günlük Çark Ödülü']);
+
+    // Socket ile güncelle
+    const updated = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [req.user.id]);
+    io.emit('points_updated', { 
+      student_id: req.user.id, 
+      total_points: updated.total_points, 
+      spendable_points: updated.spendable_points,
+      amount: prize 
+    });
+
+    res.json({ success: true, prize, last_spin_at: now });
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+// Günlük Görevleri Getir
+app.get('/api/missions', authenticateToken, async (req, res) => {
+  const today = new Date().toISOString().split('T')[0];
+  try {
+    const missions = await db.all(`
+      SELECT m.*, COALESCE(um.status, 'pending') as status
+      FROM daily_missions m
+      LEFT JOIN user_missions um ON m.id = um.mission_id AND um.user_id = $1
+      WHERE m.created_at = $2
+    `, [req.user.id, today]);
+    res.json(missions);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+// --- Oylama Sistemi ---
+
+// Aktif Oylamaları Getir
+app.get('/api/polls', authenticateToken, async (req, res) => {
+  try {
+    const rows = await db.all(`
+      SELECT p.*, 
+        (SELECT COUNT(*) FROM poll_votes pv WHERE pv.poll_id = p.id) as total_votes,
+        (SELECT option_index FROM poll_votes pv WHERE pv.poll_id = p.id AND pv.user_id = $1) as user_vote
+      FROM polls p
+      WHERE expires_at > CURRENT_TIMESTAMP OR expires_at IS NULL
+      ORDER BY created_at DESC
+    `, [req.user.id]);
+    
+    // Oyların dağılımını hesapla
+    const polls = await Promise.all(rows.map(async (p) => {
+      const votes = await db.all("SELECT option_index, COUNT(*) as count FROM poll_votes WHERE poll_id = $1 GROUP BY option_index", [p.id]);
+      const results = {};
+      votes.forEach(v => {
+        results[v.option_index] = parseInt(v.count);
+      });
+      return { ...p, results };
+    }));
+    
+    res.json(polls);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+// Oylama Oluştur (Sadece Öğretmen)
+app.post('/api/polls', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'teacher') return res.sendStatus(403);
+  const { question, options, expires_in_hours } = req.body;
+  const expires_at = expires_in_hours ? new Date(Date.now() + expires_in_hours * 60 * 60 * 1000) : null;
+  
+  try {
+    const result = await db.run("INSERT INTO polls (question, options, expires_at) VALUES ($1, $2, $3) RETURNING id", 
+      [question, JSON.stringify(options), expires_at]);
+    const poll = { id: result.rows[0].id, question, options, expires_at, created_at: new Date(), total_votes: 0 };
+    io.emit('new_poll', poll);
+    res.json(poll);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
+// Oy Ver
+app.post('/api/polls/:id/vote', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { option_index } = req.body;
+  
+  try {
+    const poll = await db.get("SELECT expires_at FROM polls WHERE id = $1", [id]);
+    if (poll.expires_at && new Date(poll.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Oylama süresi dolmuş' });
+    }
+    
+    await db.run(`
+      INSERT INTO poll_votes (poll_id, user_id, option_index) 
+      VALUES ($1, $2, $3)
+      ON CONFLICT (poll_id, user_id) DO UPDATE SET option_index = $3, voted_at = CURRENT_TIMESTAMP
+    `, [id, req.user.id, option_index]);
+    
+    // Güncel sonuçları gönder
+    const votes = await db.all("SELECT option_index, COUNT(*) as count FROM poll_votes WHERE poll_id = $1 GROUP BY option_index", [id]);
+    const results = {};
+    votes.forEach(v => {
+      results[v.option_index] = parseInt(v.count);
+    });
+    
+    io.emit('poll_updated', { poll_id: id, results, total_votes: votes.reduce((a, b) => a + parseInt(b.count), 0) });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
 });

@@ -135,48 +135,54 @@ const LayeredAvatarEditor: React.FC<Props> = ({ initialConfig, onSave, onCancel 
     link.click();
   };
   return (
-    <div className="bg-white rounded-xl shadow-xl h-full flex flex-col">
-      <div className="p-4 border-b flex justify-between items-center">
-        <h2 className="font-bold">Avatarını Oluştur</h2>
-        <button onClick={onCancel} className="p-2 rounded bg-gray-100 hover:bg-gray-200"><X /></button>
+    <div className="bg-white rounded-xl shadow-xl h-full flex flex-col overflow-hidden">
+      <div className="p-3 border-b flex justify-between items-center bg-gray-50">
+        <h2 className="font-bold text-gray-700">Avatarını Oluştur</h2>
+        <button onClick={onCancel} className="p-2 rounded bg-gray-200 hover:bg-gray-300 text-gray-600"><X size={20} /></button>
       </div>
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-2">
-        <div className="p-6 flex items-center justify-center">
-          <div className="w-64 h-64 rounded-full border-4 border-blue-200 bg-white shadow-lg relative overflow-hidden">
-            <canvas ref={canvasRef} width={256} height={256} className="absolute inset-0 w-full h-full"></canvas>
-          </div>
-        </div>
-        <div className="p-6 space-y-6">
-          {(['body','eyes','hair','cloths'] as const).map(k => (
-            <div key={k} className="flex items-center gap-3">
-              <button onClick={() => change(k, -1)} className="p-2 rounded bg-gray-100 hover:bg-gray-200"><ChevronLeft /></button>
-              <div className="flex-1 flex items-center gap-3">
-                <img 
-                  src={baseLocal(k, layers[k], version)} 
-                  alt={k} 
-                  className="w-12 h-12 rounded-lg border"
-                />
-                <span className="font-bold capitalize">{k}</span>
-                <span className="ml-auto px-2 py-1 rounded bg-gray-100 text-xs font-bold">ID: {layers[k]}</span>
-              </div>
-              <button onClick={() => change(k, +1)} className="p-2 rounded bg-gray-100 hover:bg-gray-200"><ChevronRight /></button>
+      <div className="flex-1 overflow-y-auto">
+        <div className="grid grid-cols-1 md:grid-cols-2">
+          <div className="p-4 flex items-center justify-center bg-blue-50/30">
+            <div className="w-48 h-48 md:w-64 md:h-64 rounded-full border-4 border-blue-200 bg-white shadow-lg relative overflow-hidden">
+              <canvas ref={canvasRef} width={256} height={256} className="absolute inset-0 w-full h-full"></canvas>
             </div>
-          ))}
-          <button onClick={randomize} className="w-full py-2 rounded bg-purple-600 text-white font-bold flex items-center justify-center gap-2">
-            <RefreshCw /> Rastgele
-          </button>
-          <div className="flex gap-2">
-            <button onClick={undo} className="flex-1 py-2 rounded bg-gray-200 text-gray-800 font-bold flex items-center justify-center gap-2"><RotateCcw /> Geri Al</button>
-            <button onClick={redo} className="flex-1 py-2 rounded bg-gray-200 text-gray-800 font-bold flex items-center justify-center gap-2"><RotateCw /> İleri Al</button>
           </div>
-          <div className="flex gap-2 mt-2">
-            <button onClick={downloadPng} className="flex-1 py-2 rounded bg-slate-600 text-white font-bold flex items-center justify-center gap-2"><Download /> PNG İndir</button>
-            <button 
-              onClick={() => { onSave({ provider: 'layered', layers }); }}
-              className="flex-1 py-2 rounded bg-green-600 text-white font-bold flex items-center justify-center gap-2"
-            >
-              <Save /> Kaydet
-            </button>
+          <div className="p-4 space-y-4">
+            {(['body','eyes','hair','cloths'] as const).map(k => (
+              <div key={k} className="flex items-center gap-2">
+                <button onClick={() => change(k, -1)} className="p-2 rounded bg-gray-100 hover:bg-gray-200"><ChevronLeft size={18} /></button>
+                <div className="flex-1 flex items-center gap-2 bg-gray-50 p-1 rounded-lg border">
+                  <img 
+                    src={baseLocal(k, layers[k], version)} 
+                    alt={k} 
+                    className="w-10 h-10 rounded-md border bg-white"
+                  />
+                  <span className="font-bold text-sm capitalize text-gray-600">{k}</span>
+                  <span className="ml-auto px-2 py-0.5 rounded bg-white border text-[10px] font-bold text-gray-400">ID: {layers[k]}</span>
+                </div>
+                <button onClick={() => change(k, +1)} className="p-2 rounded bg-gray-100 hover:bg-gray-200"><ChevronRight size={18} /></button>
+              </div>
+            ))}
+            
+            <div className="grid grid-cols-3 gap-2">
+              <button onClick={randomize} className="py-2 rounded bg-purple-600 text-white font-bold text-sm flex items-center justify-center gap-1 shadow-sm">
+                <RefreshCw size={16} /> Rastgele
+              </button>
+              <button onClick={undo} className="py-2 rounded bg-gray-200 text-gray-800 font-bold text-sm flex items-center justify-center gap-1"><RotateCcw size={16} /></button>
+              <button onClick={redo} className="py-2 rounded bg-gray-200 text-gray-800 font-bold text-sm flex items-center justify-center gap-1"><RotateCw size={16} /></button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <button onClick={downloadPng} className="py-3 rounded bg-slate-600 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md">
+                <Download size={18} /> PNG İndir
+              </button>
+              <button 
+                onClick={() => { onSave({ provider: 'layered', layers }); }}
+                className="py-3 rounded bg-green-600 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md"
+              >
+                <Save size={18} /> Kaydet
+              </button>
+            </div>
           </div>
         </div>
       </div>

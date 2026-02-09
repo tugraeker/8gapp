@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import api from '../api';
 import { useAuth, type User } from '../context/AuthContext';
-import { UserPlus, Users, MessageSquare, Book, Calendar, MonitorPlay, LogOut, ShoppingBag, Dice6 } from 'lucide-react';
+import { UserPlus, Users, MessageSquare, Book, Calendar, MonitorPlay, LogOut, ShoppingBag, Dice6, CheckSquare, Megaphone } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import LayeredAvatar from '../components/LayeredAvatar';
 import { io, Socket } from 'socket.io-client';
@@ -49,6 +49,22 @@ const TeacherDashboard: React.FC = () => {
   const [panelError, setPanelError] = useState<string>('');
 
   const [showNotebook, setShowNotebook] = useState(false);
+  const [showAttendance, setShowAttendance] = useState(false);
+  const [attendanceData, setAttendanceData] = useState<Record<number, string>>({});
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+
+  // Announcement State
+  const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
+  const [announcementTitle, setAnnouncementTitle] = useState('');
+  const [announcementContent, setAnnouncementContent] = useState('');
+  const [announcementFeedback, setAnnouncementFeedback] = useState('');
+  
+  // Poll State
+  const [showPollModal, setShowPollModal] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState(['', '']);
+  const [pollFeedback, setPollFeedback] = useState('');
+
   const isBirthdayToday = (bd?: string | null) => {
     if (!bd) return false;
     const d = new Date(String(bd));
@@ -62,7 +78,58 @@ const TeacherDashboard: React.FC = () => {
   const [studentRank, setStudentRank] = useState<number | null>(null);
   const [studentRosettes, setStudentRosettes] = useState<any[]>([]);
 
- 
+  const handlePostAnnouncement = async () => {
+    if (!announcementTitle || !announcementContent) {
+        setAnnouncementFeedback('Başlık ve içerik gereklidir.');
+        return;
+    }
+    try {
+        await api.post('/announcements', { title: announcementTitle, content: announcementContent });
+        setAnnouncementFeedback('Duyuru başarıyla yayınlandı!');
+        setAnnouncementTitle('');
+        setAnnouncementContent('');
+        setTimeout(() => {
+            setShowAnnouncementModal(false);
+            setAnnouncementFeedback('');
+        }, 1500);
+    } catch (err) {
+        setAnnouncementFeedback('Hata oluştu.');
+    }
+  };
+
+  const handleCreatePoll = async () => {
+    if (!pollQuestion || pollOptions.some(o => !o.trim())) {
+      setPollFeedback('Soru ve tüm seçenekler gereklidir.');
+      return;
+    }
+    try {
+      await api.post('/polls', { 
+        question: pollQuestion, 
+        options: pollOptions.filter(o => o.trim() !== '') 
+      });
+      setPollFeedback('Oylama başarıyla oluşturuldu!');
+      setPollQuestion('');
+      setPollOptions(['', '']);
+      setTimeout(() => {
+        setShowPollModal(false);
+        setPollFeedback('');
+      }, 1500);
+    } catch (err) {
+      setPollFeedback('Oylama oluşturulurken hata oluştu.');
+    }
+  };
+
+  const handleAddOption = () => {
+    if (pollOptions.length < 5) {
+      setPollOptions([...pollOptions, '']);
+    }
+  };
+
+  const handleRemoveOption = (index: number) => {
+    if (pollOptions.length > 2) {
+      setPollOptions(pollOptions.filter((_, i) => i !== index));
+    }
+  };
 
   const fetchStudentStats = async (id: number) => {
     try {
@@ -98,6 +165,42 @@ const TeacherDashboard: React.FC = () => {
     } catch {}
   };
 
+  const fetchAttendance = async () => {
+    try {
+      const res = await api.get('/attendance');
+      const data: Record<number, string> = {};
+      res.data.forEach((a: any) => {
+        data[a.student_id] = a.status;
+      });
+      setAttendanceData(data);
+    } catch (e) {
+      console.error('attendance fetch error', e);
+    }
+  };
+
+  const handleStartAttendance = async () => {
+    setAttendanceLoading(true);
+    try {
+      await api.post('/api/attendance/start');
+      await fetchAttendance();
+    } catch (e) {
+      alert('Yoklama başlatılamadı');
+    } finally {
+      setAttendanceLoading(false);
+    }
+  };
+
+  const handleToggleAttendance = async (studentId: number) => {
+    const currentStatus = attendanceData[studentId] || 'present';
+    const newStatus = currentStatus === 'present' ? 'absent' : 'present';
+    try {
+      await api.post('/api/attendance/toggle', { student_id: studentId, status: newStatus });
+      setAttendanceData(prev => ({ ...prev, [studentId]: newStatus }));
+    } catch (e) {
+      alert('Yoklama durumu güncellenemedi');
+    }
+  };
+
   const fetchStudents = async () => {
     try {
       const res = await api.get('/students');
@@ -130,6 +233,7 @@ const TeacherDashboard: React.FC = () => {
   useEffect(() => {
     fetchStudents();
     fetchRosettes();
+    fetchAttendance();
     api.get('/users').then(res => setAllUsers(res.data)).catch((e) => { 
       console.error('users fetch error', e);
       setPanelError(p => p || 'Kullanıcı listesi alınamadı.');
@@ -140,17 +244,21 @@ const TeacherDashboard: React.FC = () => {
   const socketRef = useRef<Socket | null>(null);
   useEffect(() => {
     socketRef.current = io(((import.meta as any).env?.VITE_BACKEND_URL) || 'http://localhost:3000');
-    socketRef.current.on('points_updated', (payload: { student_id: number; amount: number }) => {
-      const { student_id, amount } = payload;
+    socketRef.current.on('points_updated', (payload: { student_id: number; total_points: number; spendable_points: number; amount?: number }) => {
+      const { student_id, total_points, spendable_points, amount } = payload;
+      
       setStudents(prev => prev.map(s => {
         if (s.id !== student_id) return s;
-        const total = (s.points?.total_points || 0) + amount;
-        const spendable = amount > 0 ? (s.points?.spendable_points || 0) + amount : (s.points?.spendable_points || 0);
+        
+        // Use absolute values from server if available (most reliable)
+        const newTotal = total_points !== undefined ? total_points : (s.points?.total_points || 0) + (amount || 0);
+        const newSpendable = spendable_points !== undefined ? spendable_points : (s.points?.spendable_points || 0) + (amount || 0);
+        
         return { 
           ...s, 
-          points: { total_points: total, spendable_points: spendable },
-          total_points: total,
-          spendable_points: spendable
+          points: { total_points: newTotal, spendable_points: newSpendable },
+          total_points: newTotal,
+          spendable_points: newSpendable
         };
       }));
     });
@@ -211,6 +319,9 @@ const TeacherDashboard: React.FC = () => {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-gray-800">Sınıf Yönetimi (8/G)</h1>
         <div className="flex gap-4 flex-wrap">
+           <button onClick={() => setShowAttendance(true)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+             <CheckSquare size={20} /> Yoklama
+           </button>
            <button onClick={() => setShowNotebook(true)} className="flex items-center gap-2 bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600">
              <Book size={20} /> Not Defteri
            </button>
@@ -234,6 +345,12 @@ const TeacherDashboard: React.FC = () => {
           </button>
           <button onClick={() => setShowAddStudent(true)} className="flex items-center gap-2 bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600">
             <UserPlus size={20} /> Öğrenci Ekle
+          </button>
+          <button onClick={() => setShowAnnouncementModal(true)} className="flex items-center gap-2 bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600">
+            <Megaphone size={20} /> Duyuru Yayınla
+          </button>
+          <button onClick={() => setShowPollModal(true)} className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700">
+            <CheckSquare size={20} /> Oylama Başlat
           </button>
           <button onClick={() => { logout(); navigate('/login'); }} className="flex items-center gap-2 bg-red-100 text-red-700 px-4 py-2 rounded-lg hover:bg-red-200">
             <LogOut size={20} /> Çıkış
@@ -670,6 +787,68 @@ const TeacherDashboard: React.FC = () => {
         </div>
       )}
       
+      {/* Attendance Modal */}
+      {showAttendance && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-xl w-[800px] max-h-[90vh] flex flex-col">
+            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+              <CheckSquare size={24} className="text-blue-600" /> Yoklama Modülü
+            </h2>
+            
+            <div className="flex justify-between items-center mb-6 bg-blue-50 p-4 rounded-lg">
+              <div>
+                <p className="text-sm text-blue-700">Ders başlangıcında yoklamayı başlatın.</p>
+                <p className="text-xs text-blue-500">Öğrenciye tıklayarak "Yok" (Kırmızı) durumuna getirebilirsiniz.</p>
+              </div>
+              <button 
+                onClick={handleStartAttendance}
+                disabled={attendanceLoading}
+                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {attendanceLoading ? 'Başlatılıyor...' : 'Yoklama Başlat (Herkesi Var Yap)'}
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-3 p-2">
+              {students.map(s => {
+                const status = attendanceData[s.id] || 'present';
+                return (
+                  <div 
+                    key={s.id}
+                    onClick={() => handleToggleAttendance(s.id)}
+                    className={`p-3 rounded-lg border-2 cursor-pointer transition-all flex items-center gap-3 ${
+                      status === 'present' 
+                        ? 'bg-green-50 border-green-200 text-green-800' 
+                        : 'bg-red-50 border-red-200 text-red-800'
+                    }`}
+                  >
+                    <div className="w-8 h-8 rounded-full overflow-hidden bg-white border">
+                      {s.avatar_config?.provider === 'layered' && (
+                        <LayeredAvatar config={s.avatar_config} size={32} fallbackSeed={s.username} />
+                      )}
+                    </div>
+                    <span className="font-medium truncate">{s.name}</span>
+                    <div className={`ml-auto w-3 h-3 rounded-full ${status === 'present' ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-6 flex justify-between items-center pt-4 border-t">
+              <span className="text-sm text-gray-500">
+                Mevcut: {students.filter(s => (attendanceData[s.id] || 'present') === 'present').length} / {students.length}
+              </span>
+              <button 
+                onClick={() => setShowAttendance(false)} 
+                className="bg-gray-800 text-white px-8 py-2 rounded-lg hover:bg-gray-700"
+              >
+                Kaydet ve Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Teacher Notebook Modal */}
       {showNotebook && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -686,6 +865,131 @@ const TeacherDashboard: React.FC = () => {
               </div>
             </div>
           </div>
+      )}
+      {/* Announcement Modal */}
+      {showAnnouncementModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 rounded-2xl w-full max-w-md shadow-2xl">
+            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2 text-red-600">
+              <Megaphone size={24} /> Yeni Duyuru Yayınla
+            </h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Duyuru Başlığı</label>
+                <input 
+                  type="text" 
+                  value={announcementTitle}
+                  onChange={(e) => setAnnouncementTitle(e.target.value)}
+                  placeholder="Örn: Haftalık Ödev Hatırlatması"
+                  className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-red-500 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Duyuru İçeriği</label>
+                <textarea 
+                  value={announcementContent}
+                  onChange={(e) => setAnnouncementContent(e.target.value)}
+                  placeholder="Duyuru detaylarını buraya yazın..."
+                  rows={4}
+                  className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-red-500 outline-none resize-none"
+                />
+              </div>
+              
+              {announcementFeedback && (
+                <div className={`p-3 rounded-lg text-sm font-bold ${announcementFeedback.includes('başarıyla') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                  {announcementFeedback}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  onClick={() => setShowAnnouncementModal(false)} 
+                  className="flex-1 bg-gray-100 text-gray-700 font-bold py-3 rounded-xl hover:bg-gray-200 transition"
+                >
+                  İptal
+                </button>
+                <button 
+                  onClick={handlePostAnnouncement}
+                  className="flex-1 bg-red-600 text-white font-bold py-3 rounded-xl hover:bg-red-700 transition shadow-lg"
+                >
+                  Yayınla
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Poll Modal */}
+      {showPollModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 rounded-2xl w-full max-w-md shadow-2xl">
+            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2 text-indigo-600">
+              <CheckSquare size={24} /> Yeni Oylama Başlat
+            </h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Oylama Sorusu</label>
+                <input 
+                  type="text" 
+                  value={pollQuestion}
+                  onChange={(e) => setPollQuestion(e.target.value)}
+                  placeholder="Örn: Cuma günü film izleyelim mi?"
+                  className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1 flex justify-between">
+                  Seçenekler
+                  {pollOptions.length < 5 && (
+                    <button onClick={handleAddOption} className="text-indigo-600 hover:text-indigo-800 text-xs font-black">+ Seçenek Ekle</button>
+                  )}
+                </label>
+                <div className="space-y-2">
+                  {pollOptions.map((opt, idx) => (
+                    <div key={idx} className="flex gap-2">
+                      <input 
+                        type="text" 
+                        value={opt}
+                        onChange={(e) => {
+                          const newOpts = [...pollOptions];
+                          newOpts[idx] = e.target.value;
+                          setPollOptions(newOpts);
+                        }}
+                        placeholder={`Seçenek ${idx + 1}`}
+                        className="flex-1 p-2 border rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none text-sm"
+                      />
+                      {pollOptions.length > 2 && (
+                        <button onClick={() => handleRemoveOption(idx)} className="text-red-400 hover:text-red-600">×</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              {pollFeedback && (
+                <div className={`p-3 rounded-lg text-sm font-bold ${pollFeedback.includes('başarıyla') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                  {pollFeedback}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  onClick={() => setShowPollModal(false)} 
+                  className="flex-1 bg-gray-100 text-gray-700 font-bold py-3 rounded-xl hover:bg-gray-200 transition"
+                >
+                  İptal
+                </button>
+                <button 
+                  onClick={handleCreatePoll}
+                  className="flex-1 bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 transition shadow-lg"
+                >
+                  Başlat
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
