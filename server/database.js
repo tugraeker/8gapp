@@ -2,8 +2,19 @@ const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
+let connectionString = process.env.DATABASE_URL;
+
+// SSL Mode uyarısını gidermek için sslmode=verify-full ekle veya güncelle
+if (connectionString) {
+  if (connectionString.includes('sslmode=')) {
+    connectionString = connectionString.replace(/sslmode=[^&?]+/, 'sslmode=verify-full');
+  } else {
+    connectionString += (connectionString.includes('?') ? '&' : '?') + 'sslmode=verify-full';
+  }
+}
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: connectionString,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 

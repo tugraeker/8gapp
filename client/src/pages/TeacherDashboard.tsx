@@ -167,7 +167,7 @@ const TeacherDashboard: React.FC = () => {
 
   const fetchAttendance = async () => {
     try {
-      const res = await api.get('/attendance');
+      const res = await api.get('/api/attendance');
       const data: Record<number, string> = {};
       res.data.forEach((a: any) => {
         data[a.student_id] = a.status;
@@ -316,44 +316,44 @@ const TeacherDashboard: React.FC = () => {
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-start mb-6">
         <h1 className="text-3xl font-bold text-gray-800">Sınıf Yönetimi (8/G)</h1>
-        <div className="flex gap-4 flex-wrap">
-           <button onClick={() => setShowAttendance(true)} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
-             <CheckSquare size={20} /> Yoklama
+        <div className="flex gap-2 flex-wrap justify-end max-w-4xl">
+           <button onClick={() => setShowAttendance(true)} className="flex items-center gap-2 bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 text-sm font-semibold shadow-sm transition-colors">
+             <CheckSquare size={18} /> Yoklama
            </button>
-           <button onClick={() => setShowNotebook(true)} className="flex items-center gap-2 bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600">
-             <Book size={20} /> Not Defteri
+           <button onClick={() => setShowAnnouncementModal(true)} className="flex items-center gap-2 bg-red-500 text-white px-3 py-2 rounded-lg hover:bg-red-600 text-sm font-semibold shadow-sm transition-colors">
+             <Megaphone size={18} /> Duyuru
            </button>
-           <button onClick={() => navigate('/screensaver')} className="flex items-center gap-2 bg-indigo-500 text-white px-4 py-2 rounded-lg hover:bg-indigo-600">
-             <MonitorPlay size={20} /> Akıllı Tahta
+           <button onClick={() => setShowPollModal(true)} className="flex items-center gap-2 bg-indigo-600 text-white px-3 py-2 rounded-lg hover:bg-indigo-700 text-sm font-semibold shadow-sm transition-colors">
+             <CheckSquare size={18} /> Oylama
            </button>
-           <button onClick={() => { setShowRandomPicker(true); setPickerSelectedUsers([]); setPickerDisplayUsers([]); setPickerAnimating(false); setPickerCount(1); }} className="flex items-center gap-2 bg-pink-500 text-white px-4 py-2 rounded-lg hover:bg-pink-600">
-             <MessageSquare size={20} /> Rastgele Seçim
+           <button onClick={() => setShowNotebook(true)} className="flex items-center gap-2 bg-yellow-500 text-white px-3 py-2 rounded-lg hover:bg-yellow-600 text-sm font-semibold shadow-sm transition-colors">
+             <Book size={18} /> Not Defteri
            </button>
-           <button onClick={() => { window.open('/sinif-kura.html','_blank'); }} className="flex items-center gap-2 bg-teal-500 text-white px-4 py-2 rounded-lg hover:bg-teal-600">
-             <Dice6 size={20} /> Kura
+           <button onClick={() => navigate('/screensaver')} className="flex items-center gap-2 bg-indigo-500 text-white px-3 py-2 rounded-lg hover:bg-indigo-600 text-sm font-semibold shadow-sm transition-colors">
+             <MonitorPlay size={18} /> Akıllı Tahta
            </button>
-           <button onClick={() => { setShowShopAdmin(true); fetchItems(); }} className="flex items-center gap-2 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600">
-             <ShoppingBag size={20} /> Mağaza Yönetimi
+           <button onClick={() => { setShowRandomPicker(true); setPickerSelectedUsers([]); setPickerDisplayUsers([]); setPickerAnimating(false); setPickerCount(1); }} className="flex items-center gap-2 bg-pink-500 text-white px-3 py-2 rounded-lg hover:bg-pink-600 text-sm font-semibold shadow-sm transition-colors">
+             <MessageSquare size={18} /> Seçim
            </button>
-          <button onClick={() => navigate('/admin/logs')} className="flex items-center gap-2 bg-slate-600 text-white px-4 py-2 rounded-lg hover:bg-slate-700">
-            Loglar
+           <button onClick={() => { window.open('/sinif-kura.html','_blank'); }} className="flex items-center gap-2 bg-teal-500 text-white px-3 py-2 rounded-lg hover:bg-teal-600 text-sm font-semibold shadow-sm transition-colors">
+             <Dice6 size={18} /> Kura
+           </button>
+           <button onClick={() => { setShowShopAdmin(true); fetchItems(); }} className="flex items-center gap-2 bg-orange-500 text-white px-3 py-2 rounded-lg hover:bg-orange-600 text-sm font-semibold shadow-sm transition-colors">
+             <ShoppingBag size={18} /> Mağaza
+           </button>
+           <button onClick={() => navigate('/admin/logs')} className="flex items-center gap-2 bg-slate-600 text-white px-3 py-2 rounded-lg hover:bg-slate-700 text-sm font-semibold shadow-sm transition-colors">
+             Loglar
+           </button>
+           <button onClick={() => navigate('/chat')} className="flex items-center gap-2 bg-purple-500 text-white px-3 py-2 rounded-lg hover:bg-purple-600 text-sm font-semibold shadow-sm transition-colors">
+            <MessageSquare size={18} /> Sohbet
           </button>
-           <button onClick={() => navigate('/chat')} className="flex items-center gap-2 bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600">
-            <MessageSquare size={20} /> Sohbet
+          <button onClick={() => setShowAddStudent(true)} className="flex items-center gap-2 bg-green-500 text-white px-3 py-2 rounded-lg hover:bg-green-600 text-sm font-semibold shadow-sm transition-colors">
+            <UserPlus size={18} /> Ekle
           </button>
-          <button onClick={() => setShowAddStudent(true)} className="flex items-center gap-2 bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600">
-            <UserPlus size={20} /> Öğrenci Ekle
-          </button>
-          <button onClick={() => setShowAnnouncementModal(true)} className="flex items-center gap-2 bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600">
-            <Megaphone size={20} /> Duyuru Yayınla
-          </button>
-          <button onClick={() => setShowPollModal(true)} className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700">
-            <CheckSquare size={20} /> Oylama Başlat
-          </button>
-          <button onClick={() => { logout(); navigate('/login'); }} className="flex items-center gap-2 bg-red-100 text-red-700 px-4 py-2 rounded-lg hover:bg-red-200">
-            <LogOut size={20} /> Çıkış
+          <button onClick={() => { logout(); navigate('/login'); }} className="flex items-center gap-2 bg-red-100 text-red-700 px-3 py-2 rounded-lg hover:bg-red-200 text-sm font-semibold shadow-sm transition-colors">
+            <LogOut size={18} /> Çıkış
           </button>
         </div>
       </div>

@@ -82,11 +82,10 @@ const checkMissionCompletion = async (userId, type) => {
   }
 };
 
-// Server başlatıldığında görevleri kur
-initDailyMissions();
-
-// Initialize Database
-db.initDatabase();
+// Initialize Database and then start missions
+db.initDatabase().then(() => {
+  initDailyMissions();
+});
 
 // --- Attendance Reset Task (Every 12 hours) ---
 // Her 12 saatte bir çalışır ve yoklamayı sıfırlar (tüm öğrencileri 'present' yapar)

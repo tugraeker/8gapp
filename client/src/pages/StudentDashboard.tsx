@@ -101,7 +101,7 @@ const StudentDashboard: React.FC = () => {
       fetchMissions();
     });
 
-    socketRef.current.on('poll_updated', (payload: any) => {
+    socketRef.current.on('poll_updated', () => {
       // Oylama sonuçları güncellendiğinde
       fetchPolls();
     });
