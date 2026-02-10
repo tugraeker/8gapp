@@ -101,10 +101,10 @@ db.initDatabase().then(() => {
   initDailyMissions();
 });
 
-// --- Attendance Reset Task (Every 12 hours) ---
+// --- Attendance Reset Task (Every day at 04:00 AM) ---
 let attendanceCron;
 if (process.env.NODE_ENV !== 'test') {
-  attendanceCron = cron.schedule('0 */12 * * *', async () => {
+  attendanceCron = cron.schedule('0 4 * * *', async () => {
     console.log('--- YOKLAMA SIFIRLAMA BAŞLATILDI ---');
     try {
       await db.run("UPDATE attendance SET status = 'present', updated_at = CURRENT_TIMESTAMP");
@@ -127,6 +127,17 @@ const hasProfanity = (text) => {
   if (!text) return false;
   const lowerText = text.toLowerCase();
   return badWords.some(word => lowerText.includes(word));
+};
+
+// Avatar parse işlemleri (Tutarlı dönüş için)
+const parseAvatar = (cfg) => {
+  try {
+    if (!cfg) return {};
+    const parsed = (typeof cfg === 'string') ? JSON.parse(cfg) : cfg;
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch (e) {
+    return {};
+  }
 };
 
 // Generic Error Handler Middleware
@@ -165,6 +176,7 @@ const authenticateToken = (req, res, next) => {
 // --- Auth Routes ---
 
 app.post('/api/login', async (req, res, next) => {
+  console.log('[Login Route Hit]', req.body);
   const { username, password } = req.body;
   
   if (!username || !password) {
@@ -180,16 +192,30 @@ app.post('/api/login', async (req, res, next) => {
     .replace(/ç/g, 'c');
   
   try {
-    console.log(`[Login Attempt] Username: ${normalizedUsername}`);
-    const user = await db.get("SELECT * FROM users WHERE LOWER(username) = ?", [normalizedUsername]);
-    if (!user) {
-      console.log(`[Login Fail] User not found: ${normalizedUsername}`);
-      return res.status(400).json({ error: 'Kullanıcı bulunamadı' });
-    }
+      console.log(`[Login Attempt] Original: "${username}", Normalized: "${normalizedUsername}"`);
+      
+      // Hem kullanıcı adına hem de isme göre ara
+      let user = await db.get("SELECT * FROM users WHERE LOWER(username) = ?", [normalizedUsername]);
+      
+      if (!user) {
+        // İsim bazlı arama için boşlukları temizle ve karşılaştır
+        const allUsers = await db.all("SELECT * FROM users");
+        user = allUsers.find(u => {
+          const normalizedDBName = u.name.toLowerCase().trim()
+            .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's')
+            .replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c');
+          return normalizedDBName === normalizedUsername;
+        });
+      }
+
+      if (!user) {
+        console.log(`[Login Fail] User not found: "${normalizedUsername}"`);
+        return res.status(400).json({ error: 'Kullanıcı bulunamadı' });
+      }
 
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
-      console.log(`[Login Fail] Invalid password for: ${normalizedUsername}`);
+      console.log(`[Login Fail] Invalid password for: "${normalizedUsername}"`);
       return res.status(400).json({ error: 'Hatalı şifre' });
     }
 
@@ -205,18 +231,19 @@ app.post('/api/login', async (req, res, next) => {
 
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role, name: user.name }, SECRET_KEY);
     console.log(`[Login Success] User: ${user.username}, Role: ${user.role}`);
-    res.json({ 
-      token, 
-      user: { 
-        id: user.id, 
-        username: user.username, 
-        role: user.role, 
-        name: user.name, 
-        avatar_config: JSON.parse(user.avatar_config || '{}'),
-        points: pointsObj,
-        level: levelObj
-      } 
-    });
+ 
+      res.json({ 
+        token, 
+        user: { 
+          id: user.id, 
+          username: user.username, 
+          role: user.role, 
+          name: user.name, 
+          avatar_config: parseAvatar(user.avatar_config),
+          points: pointsObj,
+          level: levelObj
+        } 
+      });
   } catch (err) {
     console.error(`[Login Exception] for ${normalizedUsername}:`, err);
     next(err);
@@ -227,7 +254,7 @@ app.get('/api/me', authenticateToken, async (req, res, next) => {
   try {
     const user = await db.get("SELECT id, username, role, name, avatar_config, birth_date, first_login FROM users WHERE id = ?", [req.user.id]);
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
-    
+      
     if (user.role === 'student') {
         const points = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = ?", [user.id]);
         user.points = {
@@ -237,13 +264,7 @@ app.get('/api/me', authenticateToken, async (req, res, next) => {
         user.level = calculateLevel(user.points.total_points);
     }
     
-    // Avatar parse işlemleri...
-    try {
-      const parsed = JSON.parse(user.avatar_config || '{}');
-      user.avatar_config = Object.keys(parsed).length === 0 ? null : parsed;
-    } catch {
-      user.avatar_config = null;
-    }
+    user.avatar_config = parseAvatar(user.avatar_config);
     res.json(user);
   } catch (err) {
     next(err);
@@ -475,7 +496,7 @@ app.get('/api/leaderboard', authenticateToken, async (req, res, next) => {
           
       const leaderboard = rows.map(r => ({
           ...r,
-          avatar_config: JSON.parse(r.avatar_config || '{}')
+          avatar_config: parseAvatar(r.avatar_config)
       }));
       res.json(leaderboard);
     } catch (err) {
@@ -500,17 +521,11 @@ app.get('/api/leaderboard/weeklyTop', authenticateToken, async (req, res, next) 
       `);
       
       if (!row) return res.json(null);
-      let parsed = {};
-      try {
-          parsed = JSON.parse(row.avatar_config || '{}');
-      } catch {
-          parsed = {};
-      }
       res.json({ 
           id: row.id, 
           name: row.name, 
           username: row.username, 
-          avatar_config: Object.keys(parsed).length === 0 ? null : parsed, 
+          avatar_config: parseAvatar(row.avatar_config), 
           weekly_points: row.weekly_points 
       });
     } catch (err) {
@@ -566,21 +581,13 @@ app.get('/api/students', authenticateToken, async (req, res, next) => {
     `);
     
     const students = rows.map(r => {
-      let avatarConfig = null;
-      try {
-        avatarConfig = (typeof r.avatar_config === 'string' && r.avatar_config.trim() !== "") 
-          ? JSON.parse(r.avatar_config) 
-          : r.avatar_config;
-      } catch (e) {
-        avatarConfig = null;
-      }
       return {
         ...r,
         points: {
           total_points: r.total_points,
           spendable_points: r.spendable_points
         },
-        avatar_config: avatarConfig
+        avatar_config: parseAvatar(r.avatar_config)
       };
     });
 
@@ -721,11 +728,26 @@ app.get('/api/transactions', authenticateToken, async (req, res, next) => {
     const rows = await db.all(sql, params);
     if (exportFmt === 'csv') {
       const header = ['id','created_at','type','from_user_id','from_name','to_user_id','to_name','amount','reason'];
+      const escapeCsv = (val) => {
+        if (val === null || val === undefined) return '""';
+        const str = String(val).replace(/"/g, '""').replace(/\n/g, ' ');
+        return `"${str}"`;
+      };
+      
       const lines = rows.map(r => [
-        r.id, r.created_at, r.type, r.from_user_id, r.from_name || '', r.to_user_id, r.to_name || '', r.amount, (r.reason || '').replace(/\n/g, ' ')
+        r.id, 
+        escapeCsv(r.created_at), 
+        escapeCsv(r.type), 
+        r.from_user_id, 
+        escapeCsv(r.from_name), 
+        r.to_user_id, 
+        escapeCsv(r.to_name), 
+        r.amount, 
+        escapeCsv(r.reason)
       ].join(','));
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.send([header.join(','), ...lines].join('\n'));
+      res.setHeader('Content-Disposition', 'attachment; filename=transactions.csv');
+      res.send([header.map(h => `"${h}"`).join(','), ...lines].join('\n'));
     } else {
       res.json(rows);
     }
@@ -758,11 +780,7 @@ app.post('/api/messages', authenticateToken, async (req, res, next) => {
       return res.status(400).json({ error: 'Mesaj içeriği ve grup türü gereklidir' });
     }
     
-    // Profanity Filter (Simple list)
-    const badWords = ['küfür', 'aptal', 'salak', 'mal']; // Example list
-    const hasBadWord = badWords.some(word => content.toLowerCase().includes(word));
-    
-    if (hasBadWord) {
+    if (hasProfanity(content)) {
         return res.status(400).json({ error: 'Uygunsuz içerik tespit edildi' });
     }
     
@@ -808,14 +826,14 @@ app.post('/api/notifications', authenticateToken, async (req, res, next) => {
     if (user_id) {
       const result = await db.run("INSERT INTO notifications (user_id, message) VALUES (?, ?)", [user_id, message]);
       const id = result.id;
-      io.emit('notification_new', { id, user_id, message });
+      io.to(`user_${user_id}`).emit('notification', { id, message }); // Use specific room
       res.json({ success: true, id });
     } else {
       const rows = await db.all("SELECT id FROM users WHERE role = 'student'");
       for (const r of rows) {
         await db.run("INSERT INTO notifications (user_id, message) VALUES (?, ?)", [r.id, message]);
+        io.to(`user_${r.id}`).emit('notification', { message }); // Send to each room
       }
-      io.emit('notification_broadcast', { message });
       res.json({ success: true });
     }
   } catch (err) {
@@ -889,12 +907,10 @@ app.post('/api/attendance/toggle', authenticateToken, async (req, res, next) => 
   if (!student_id || !status) return res.status(400).json({ error: 'Öğrenci ID ve durum gereklidir' });
   
   try {
-    // Daha sağlam bir güncelleme için UPSERT kullanalım
-    await db.run(`
-      INSERT INTO attendance (student_id, status, updated_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT (student_id) DO UPDATE SET status = ?, updated_at = CURRENT_TIMESTAMP
-    `, [student_id, status, status]);
+    // SQLite compatible UPSERT (using INSERT OR REPLACE or manual check)
+    // We'll use INSERT OR IGNORE followed by UPDATE for better compatibility
+    await db.run("INSERT OR IGNORE INTO attendance (student_id, status, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)", [student_id, status]);
+    await db.run("UPDATE attendance SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE student_id = ?", [status, student_id]);
     
     // Eğer 'present' yapıldıysa görev kontrolü
     if (status === 'present') {
@@ -1034,7 +1050,7 @@ app.post('/api/rosettes/assign', authenticateToken, async (req, res, next) => {
       const rosette = await db.get("SELECT id FROM rosettes WHERE id = ?", [rosette_id]);
       if (!rosette) return res.status(404).json({ error: 'Rozet bulunamadı' });
 
-      await db.run("INSERT INTO user_rosettes (user_id, rosette_id) VALUES (?, ?) ON CONFLICT DO NOTHING", [student_id, rosette_id]);
+      await db.run("INSERT OR IGNORE INTO user_rosettes (user_id, rosette_id) VALUES (?, ?)", [student_id, rosette_id]);
       io.emit('rosette_awarded', { student_id, rosette_id });
       res.json({ success: true });
     } catch (err) {
@@ -1128,7 +1144,7 @@ app.post('/api/polls', authenticateToken, async (req, res, next) => {
     return res.status(400).json({ error: 'Seçenekler boş olamaz' });
   }
 
-  const expires_at = expires_in_hours ? new Date(Date.now() + expires_in_hours * 60 * 60 * 1000) : null;
+  const expires_at = expires_in_hours ? new Date(Date.now() + expires_in_hours * 60 * 60 * 1000).toISOString() : null;
   
   try {
     const result = await db.run("INSERT INTO polls (question, options, expires_at) VALUES (?, ?, ?)", 
@@ -1154,11 +1170,8 @@ app.post('/api/polls/:id/vote', authenticateToken, async (req, res, next) => {
       return res.status(400).json({ error: 'Oylama süresi dolmuş' });
     }
     
-    await db.run(`
-      INSERT INTO poll_votes (poll_id, user_id, option_index) 
-      VALUES (?, ?, ?)
-      ON CONFLICT (poll_id, user_id) DO UPDATE SET option_index = ?, voted_at = CURRENT_TIMESTAMP
-    `, [id, req.user.id, option_index, option_index]);
+    await db.run("INSERT OR IGNORE INTO poll_votes (poll_id, user_id, option_index) VALUES (?, ?, ?)", [id, req.user.id, option_index]);
+    await db.run("UPDATE poll_votes SET option_index = ?, voted_at = CURRENT_TIMESTAMP WHERE poll_id = ? AND user_id = ?", [option_index, id, req.user.id]);
     
     // Güncel sonuçları gönder
     const votes = await db.all("SELECT option_index, COUNT(*) as count FROM poll_votes WHERE poll_id = ? GROUP BY option_index", [id]);
@@ -1168,6 +1181,44 @@ app.post('/api/polls/:id/vote', authenticateToken, async (req, res, next) => {
     });
     
     io.emit('poll_updated', { poll_id: id, results, total_votes: votes.reduce((a, b) => a + parseInt(b.count), 0) });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Teacher Notes (Notebook) Routes ---
+
+app.get('/api/users/:id/notes', authenticateToken, async (req, res, next) => {
+  if (req.user.role !== 'teacher' && req.user.role !== 'admin') return res.status(403).json({ error: 'Yetkisiz erişim' });
+  const { id } = req.params;
+  try {
+    const rows = await db.all("SELECT * FROM teacher_notes WHERE student_id = ? ORDER BY created_at DESC", [id]);
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/users/:id/notes', authenticateToken, async (req, res, next) => {
+  if (req.user.role !== 'teacher' && req.user.role !== 'admin') return res.status(403).json({ error: 'Yetkisiz erişim' });
+  const { id } = req.params;
+  const { note } = req.body;
+  if (!note || note.trim() === '') return res.status(400).json({ error: 'Not içeriği boş olamaz' });
+  
+  try {
+    const result = await db.run("INSERT INTO teacher_notes (student_id, note) VALUES (?, ?)", [id, note]);
+    res.json({ id: result.id, student_id: id, note, created_at: new Date() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/notes/:id', authenticateToken, async (req, res, next) => {
+  if (req.user.role !== 'teacher' && req.user.role !== 'admin') return res.status(403).json({ error: 'Yetkisiz erişim' });
+  const { id } = req.params;
+  try {
+    await db.run("DELETE FROM teacher_notes WHERE id = ?", [id]);
     res.json({ success: true });
   } catch (err) {
     next(err);

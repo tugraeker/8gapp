@@ -49,6 +49,10 @@ const TeacherDashboard: React.FC = () => {
   const [panelError, setPanelError] = useState<string>('');
 
   const [showNotebook, setShowNotebook] = useState(false);
+  const [studentNotes, setStudentNotes] = useState<{id: number, note: string, created_at: string}[]>([]);
+  const [newNote, setNewNote] = useState('');
+  const [noteLoading, setNoteLoading] = useState(false);
+  const [selectedNotebookStudent, setSelectedNotebookStudent] = useState<User | null>(null);
   const [showAttendance, setShowAttendance] = useState(false);
   const [attendanceData, setAttendanceData] = useState<Record<number, string>>({});
   const [attendanceLoading, setAttendanceLoading] = useState(false);
@@ -94,6 +98,39 @@ const TeacherDashboard: React.FC = () => {
         }, 1500);
     } catch (err: any) {
         setAnnouncementFeedback(err.response?.data?.error || 'Hata oluştu.');
+    }
+  };
+
+  const fetchNotes = async (studentId: number) => {
+    try {
+      const res = await api.get(`/users/${studentId}/notes`);
+      setStudentNotes(res.data);
+    } catch (e) {
+      console.error('notes fetch error', e);
+    }
+  };
+
+  const handleAddNote = async () => {
+    if (!selectedNotebookStudent || !newNote.trim()) return;
+    setNoteLoading(true);
+    try {
+      await api.post(`/users/${selectedNotebookStudent.id}/notes`, { note: newNote.trim() });
+      setNewNote('');
+      fetchNotes(selectedNotebookStudent.id);
+    } catch (e) {
+      alert('Not eklenemedi');
+    } finally {
+      setNoteLoading(false);
+    }
+  };
+
+  const handleDeleteNote = async (noteId: number) => {
+    if (!window.confirm('Bu notu silmek istediğinize emin misiniz?')) return;
+    try {
+      await api.delete(`/notes/${noteId}`);
+      if (selectedNotebookStudent) fetchNotes(selectedNotebookStudent.id);
+    } catch (e) {
+      alert('Not silinemedi');
     }
   };
 
@@ -884,20 +921,94 @@ const TeacherDashboard: React.FC = () => {
 
       {/* Teacher Notebook Modal */}
       {showNotebook && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-xl w-[600px] h-[500px] flex flex-col">
-              <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-                  <Book size={24} /> Öğretmen Not Defteri
-              </h2>
-              <textarea 
-                  className="flex-1 w-full p-4 border rounded-xl bg-yellow-50 font-handwriting resize-none focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                  placeholder="Buraya sınıf veya öğrencilerle ilgili özel notlarınızı alabilirsiniz..."
-              ></textarea>
-              <div className="mt-4 flex justify-end">
-                  <button onClick={() => setShowNotebook(false)} className="bg-gray-800 text-white px-6 py-2 rounded-lg hover:bg-gray-700">Kapat</button>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+            <div className="p-6 border-b flex justify-between items-center bg-yellow-50">
+              <div className="flex items-center gap-3">
+                <Book className="text-yellow-600" size={24} />
+                <h2 className="text-xl font-bold text-gray-800">Öğretmen Not Defteri</h2>
+              </div>
+              <button onClick={() => { setShowNotebook(false); setSelectedNotebookStudent(null); setStudentNotes([]); }} className="text-gray-400 hover:text-gray-600 transition">
+                <LogOut size={24} />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-hidden flex">
+              {/* Student List Sidebar */}
+              <div className="w-64 border-r overflow-y-auto bg-gray-50 p-4 space-y-2">
+                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Öğrenciler</h3>
+                {students.map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => { setSelectedNotebookStudent(s); fetchNotes(s.id); }}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${selectedNotebookStudent?.id === s.id ? 'bg-yellow-500 text-white shadow-md' : 'text-gray-600 hover:bg-gray-200'}`}
+                  >
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+              
+              {/* Notes Content */}
+              <div className="flex-1 flex flex-col bg-white">
+                {selectedNotebookStudent ? (
+                  <>
+                    <div className="p-6 border-b flex justify-between items-center">
+                      <h3 className="font-bold text-gray-800">{selectedNotebookStudent.name} için Notlar</h3>
+                      <span className="text-xs text-gray-500">{studentNotes.length} not kayıtlı</span>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                      {studentNotes.length > 0 ? (
+                        studentNotes.map(n => (
+                          <div key={n.id} className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg shadow-sm relative group">
+                            <p className="text-gray-800 text-sm whitespace-pre-wrap pr-8">{n.note}</p>
+                            <div className="mt-2 text-[10px] text-gray-400 flex justify-between items-center">
+                              <span>{new Date(n.created_at).toLocaleString('tr-TR')}</span>
+                              <button 
+                                onClick={() => handleDeleteNote(n.id)}
+                                className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                Sil
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-50">
+                          <Book size={48} className="mb-2" />
+                          <p>Henüz not eklenmemiş.</p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="p-6 border-t bg-gray-50">
+                      <div className="flex gap-2">
+                        <textarea
+                          value={newNote}
+                          onChange={(e) => setNewNote(e.target.value)}
+                          placeholder="Yeni not ekle..."
+                          className="flex-1 border rounded-xl p-3 text-sm focus:ring-2 focus:ring-yellow-500 focus:border-transparent resize-none h-20"
+                        />
+                        <button
+                          onClick={handleAddNote}
+                          disabled={noteLoading || !newNote.trim()}
+                          className="bg-yellow-500 text-white px-6 rounded-xl font-bold hover:bg-yellow-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Ekle
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+                    <Users size={64} className="mb-4 opacity-20" />
+                    <p className="text-lg">Notlarını görmek için bir öğrenci seçin</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
+        </div>
       )}
       {/* Announcement Modal */}
       {showAnnouncementModal && (
