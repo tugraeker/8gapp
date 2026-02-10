@@ -57,14 +57,14 @@ const calculateLevel = (totalPoints) => {
 const initDailyMissions = async () => {
   const today = new Date().toISOString().split('T')[0];
   try {
-    const existing = await db.get("SELECT count(*) FROM daily_missions WHERE created_at = $1", [today]);
+    const existing = await db.get("SELECT count(*) as count FROM daily_missions WHERE created_at = ?", [today]);
     if (parseInt(existing.count) === 0) {
       const missions = [
         { title: "Güne Merhaba", description: "Bugün okula gelerek yoklamaya katıl!", points: 2, type: "attendance" },
         { title: "Sohbet Saati", description: "Grup sohbetine bir mesaj yaz!", points: 1, type: "chat" }
       ];
       for (const m of missions) {
-        await db.run("INSERT INTO daily_missions (title, description, points_reward, type, created_at) VALUES ($1, $2, $3, $4, $5)", 
+        await db.run("INSERT INTO daily_missions (title, description, points_reward, type, created_at) VALUES (?, ?, ?, ?, ?)", 
           [m.title, m.description, m.points, m.type, today]);
       }
     }
@@ -77,16 +77,16 @@ const initDailyMissions = async () => {
 const checkMissionCompletion = async (userId, type) => {
   const today = new Date().toISOString().split('T')[0];
   try {
-    const mission = await db.get("SELECT id, points_reward FROM daily_missions WHERE type = $1 AND created_at = $2", [type, today]);
+    const mission = await db.get("SELECT id, points_reward FROM daily_missions WHERE type = ? AND created_at = ?", [type, today]);
     if (mission) {
-      const userMission = await db.get("SELECT status FROM user_missions WHERE user_id = $1 AND mission_id = $2", [userId, mission.id]);
+      const userMission = await db.get("SELECT status FROM user_missions WHERE user_id = ? AND mission_id = ?", [userId, mission.id]);
       if (!userMission || userMission.status === 'pending') {
-        await db.run("INSERT INTO user_missions (user_id, mission_id, status, completed_at) VALUES ($1, $2, 'completed', CURRENT_TIMESTAMP) ON CONFLICT (user_id, mission_id) DO UPDATE SET status = 'completed', completed_at = CURRENT_TIMESTAMP", [userId, mission.id]);
+        await db.run("INSERT INTO user_missions (user_id, mission_id, status, completed_at) VALUES (?, ?, 'completed', CURRENT_TIMESTAMP)", [userId, mission.id]);
         
-        // Ödülü Ver
-        await db.run("UPDATE points SET total_points = total_points + $1, spendable_points = spendable_points + $1 WHERE user_id = $2", [mission.points_reward, userId]);
+        await db.run("INSERT OR IGNORE INTO points (user_id, total_points, spendable_points) VALUES (?, 0, 0)", [userId]);
+        await db.run("UPDATE points SET total_points = total_points + ?, spendable_points = spendable_points + ? WHERE user_id = ?", [mission.points_reward, mission.points_reward, userId]);
         
-        const updated = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [userId]);
+        const updated = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = ?", [userId]);
         io.emit('points_updated', { student_id: userId, total_points: updated.total_points, spendable_points: updated.spendable_points, amount: mission.points_reward });
         io.to(`user_${userId}`).emit('notification', { message: `Görev Tamamlandı: ${mission.points_reward} puan kazandın!` });
       }
@@ -107,7 +107,7 @@ if (process.env.NODE_ENV !== 'test') {
   attendanceCron = cron.schedule('0 */12 * * *', async () => {
     console.log('--- YOKLAMA SIFIRLAMA BAŞLATILDI ---');
     try {
-      await db.run("UPDATE attendance SET status = 'present', updated_at = NOW()");
+      await db.run("UPDATE attendance SET status = 'present', updated_at = CURRENT_TIMESTAMP");
       console.log('Yoklama başarıyla sıfırlandı.');
     } catch (err) {
       console.error('Yoklama sıfırlama hatası:', err);
@@ -181,7 +181,7 @@ app.post('/api/login', async (req, res, next) => {
   
   try {
     console.log(`[Login Attempt] Username: ${normalizedUsername}`);
-    const user = await db.get("SELECT * FROM users WHERE LOWER(username) = $1", [normalizedUsername]);
+    const user = await db.get("SELECT * FROM users WHERE LOWER(username) = ?", [normalizedUsername]);
     if (!user) {
       console.log(`[Login Fail] User not found: ${normalizedUsername}`);
       return res.status(400).json({ error: 'Kullanıcı bulunamadı' });
@@ -196,7 +196,7 @@ app.post('/api/login', async (req, res, next) => {
     let pointsObj = { total_points: 0, spendable_points: 0 };
     let levelObj = { level: 1, name: "Çaylak", next: 250, min: 0 };
     if (user.role === 'student') {
-      const p = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [user.id]);
+      const p = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = ?", [user.id]);
       if (p) {
         pointsObj = { total_points: p.total_points, spendable_points: p.spendable_points };
         levelObj = calculateLevel(p.total_points);
@@ -224,11 +224,11 @@ app.post('/api/login', async (req, res, next) => {
 
 app.get('/api/me', authenticateToken, async (req, res, next) => {
   try {
-    const user = await db.get("SELECT id, username, role, name, avatar_config, birth_date, first_login FROM users WHERE id = $1", [req.user.id]);
+    const user = await db.get("SELECT id, username, role, name, avatar_config, birth_date, first_login FROM users WHERE id = ?", [req.user.id]);
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı' });
     
     if (user.role === 'student') {
-        const points = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [user.id]);
+        const points = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = ?", [user.id]);
         user.points = {
           total_points: points ? points.total_points : 0,
           spendable_points: points ? points.spendable_points : 0
@@ -253,7 +253,7 @@ app.post('/api/me/birthday', authenticateToken, async (req, res, next) => {
     const { birth_date } = req.body;
     if (!birth_date) return res.status(400).json({ error: 'Doğum tarihi gereklidir' });
     try {
-      await db.run("UPDATE users SET birth_date = $1, first_login = FALSE WHERE id = $2", [birth_date, req.user.id]);
+      await db.run("UPDATE users SET birth_date = ?, first_login = 0 WHERE id = ?", [birth_date, req.user.id]);
       res.json({ success: true });
     } catch (err) {
       next(err);
@@ -264,7 +264,7 @@ app.post('/api/me/avatar', authenticateToken, async (req, res, next) => {
     const { avatar_config } = req.body;
     try {
       const cfg = avatar_config || {};
-      await db.run("UPDATE users SET avatar_config = $1 WHERE id = $2", [JSON.stringify(cfg), req.user.id]);
+      await db.run("UPDATE users SET avatar_config = ? WHERE id = ?", [JSON.stringify(cfg), req.user.id]);
       res.json({ success: true });
     } catch (err) {
       next(err);
@@ -280,12 +280,12 @@ app.post('/api/me/password', authenticateToken, async (req, res, next) => {
       return res.status(400).json({ error: 'Yeni şifre en az 6 karakter olmalıdır' });
     }
     try {
-      const user = await db.get("SELECT password FROM users WHERE id = $1", [req.user.id]);
+      const user = await db.get("SELECT password FROM users WHERE id = ?", [req.user.id]);
       const valid = await bcrypt.compare(current_password, user.password);
       if (!valid) return res.status(400).json({ error: 'Mevcut şifre yanlış' });
       
       const hash = await bcrypt.hash(new_password, 10);
-      await db.run("UPDATE users SET password = $1 WHERE id = $2", [hash, req.user.id]);
+      await db.run("UPDATE users SET password = ? WHERE id = ?", [hash, req.user.id]);
       res.json({ success: true });
     } catch (err) {
       next(err);
@@ -311,7 +311,7 @@ app.get('/api/inventory', authenticateToken, async (req, res, next) => {
           SELECT ui.*, i.name, i.category, i.cost, i.asset_id 
           FROM user_items ui 
           JOIN items i ON ui.item_id = i.id 
-          WHERE ui.user_id = $1`, 
+          WHERE ui.user_id = ?`, 
           [req.user.id]);
       res.json(rows);
     } catch (err) {
@@ -328,7 +328,7 @@ app.get('/api/users/:id/inventory', authenticateToken, async (req, res, next) =>
           SELECT ui.*, i.name, i.category, i.cost, i.asset_id 
           FROM user_items ui 
           JOIN items i ON ui.item_id = i.id 
-          WHERE ui.user_id = $1`, 
+          WHERE ui.user_id = ?`, 
           [id]);
       res.json(rows);
     } catch (err) {
@@ -342,35 +342,35 @@ app.post('/api/items/buy', authenticateToken, async (req, res, next) => {
     if (!item_id) return res.status(400).json({ error: 'Ürün ID gereklidir' });
     
     try {
-      const item = await db.get("SELECT * FROM items WHERE id = $1", [item_id]);
+      const item = await db.get("SELECT * FROM items WHERE id = ?", [item_id]);
       if (!item) return res.status(404).json({ error: 'Ürün bulunamadı' });
 
       // Clothing is free
       if (item.category === 'clothing') {
-          const owned = await db.get("SELECT * FROM user_items WHERE user_id = $1 AND item_id = $2", [req.user.id, item_id]);
+          const owned = await db.get("SELECT * FROM user_items WHERE user_id = ? AND item_id = ?", [req.user.id, item_id]);
           if (owned) return res.status(400).json({ error: 'Bu ürüne zaten sahipsin' });
           
-          await db.run("INSERT INTO user_items (user_id, item_id) VALUES ($1, $2)", [req.user.id, item_id]);
+          await db.run("INSERT INTO user_items (user_id, item_id) VALUES (?, ?)", [req.user.id, item_id]);
           return res.json({ success: true, message: 'Ücretsiz eklendi' });
       }
 
       // Other categories (e.g., frame) require points
-      const pointsRow = await db.get("SELECT spendable_points FROM points WHERE user_id = $1", [req.user.id]);
+      const pointsRow = await db.get("SELECT spendable_points FROM points WHERE user_id = ?", [req.user.id]);
       if (!pointsRow || pointsRow.spendable_points < item.cost) {
           return res.status(400).json({ error: 'Yetersiz puan' });
       }
       
-      const owned = await db.get("SELECT * FROM user_items WHERE user_id = $1 AND item_id = $2", [req.user.id, item_id]);
+      const owned = await db.get("SELECT * FROM user_items WHERE user_id = ? AND item_id = ?", [req.user.id, item_id]);
       if (owned) return res.status(400).json({ error: 'Bu ürüne zaten sahipsin' });
 
       // Transaction-like sequence
-      await db.run("UPDATE points SET spendable_points = spendable_points - $1 WHERE user_id = $2", [item.cost, req.user.id]);
-      await db.run("INSERT INTO user_items (user_id, item_id) VALUES ($1, $2)", [req.user.id, item_id]);
-      await db.run("INSERT INTO transactions (from_user_id, to_user_id, amount, reason, type) VALUES ($1, $2, $3, $4, 'shop')", 
+      await db.run("UPDATE points SET spendable_points = spendable_points - ? WHERE user_id = ?", [item.cost, req.user.id]);
+      await db.run("INSERT INTO user_items (user_id, item_id) VALUES (?, ?)", [req.user.id, item_id]);
+      await db.run("INSERT INTO transactions (from_user_id, to_user_id, amount, reason, type) VALUES (?, ?, ?, ?, 'shop')", 
           [req.user.id, null, -item.cost, `Satın alma: ${item.name}`]);
       
       // Get updated points for socket
-      const updatedPoints = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [req.user.id]);
+      const updatedPoints = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = ?", [req.user.id]);
       if (updatedPoints) {
         io.emit('points_updated', { 
           student_id: req.user.id, 
@@ -396,12 +396,12 @@ app.post('/api/spendable/add', authenticateToken, async (req, res, next) => {
   if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: 'Geçersiz miktar' });
   
   try {
-    await db.run("UPDATE points SET spendable_points = spendable_points + $1 WHERE user_id = $2", [amt, user_id]);
-    await db.run("INSERT INTO transactions (from_user_id, to_user_id, amount, reason, type) VALUES ($1, $2, $3, $4, 'bonus')", 
+    await db.run("UPDATE points SET spendable_points = spendable_points + ? WHERE user_id = ?", [amt, user_id]);
+    await db.run("INSERT INTO transactions (from_user_id, to_user_id, amount, reason, type) VALUES (?, ?, ?, ?, 'bonus')", 
       [req.user.id, user_id, amt, reason || 'Bonus / Pomodoro']);
     
     // Get updated points for socket
-    const updatedPoints = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [user_id]);
+    const updatedPoints = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = ?", [user_id]);
     if (updatedPoints) {
       io.emit('points_updated', { 
         student_id: user_id, 
@@ -426,8 +426,8 @@ app.post('/api/items', authenticateToken, async (req, res, next) => {
   }
   
   try {
-    const result = await db.run("INSERT INTO items (name, category, cost, asset_id) VALUES ($1, $2, $3, $4) RETURNING id", [name, category, cost, asset_id]);
-    res.json({ id: result.rows[0].id, name, category, cost, asset_id });
+    const result = await db.run("INSERT INTO items (name, category, cost, asset_id) VALUES (?, ?, ?, ?)", [name, category, cost, asset_id]);
+    res.json({ id: result.id, name, category, cost, asset_id });
   } catch (err) {
     next(err);
   }
@@ -443,7 +443,7 @@ app.put('/api/items/:id', authenticateToken, async (req, res, next) => {
   }
 
   try {
-    await db.run("UPDATE items SET name = $1, category = $2, cost = $3, asset_id = $4 WHERE id = $5", [name, category, cost, asset_id, id]);
+    await db.run("UPDATE items SET name = ?, category = ?, cost = ?, asset_id = ? WHERE id = ?", [name, category, cost, asset_id, id]);
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -455,7 +455,7 @@ app.delete('/api/items/:id', authenticateToken, async (req, res, next) => {
   if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Yetkisiz erişim' });
   const { id } = req.params;
   try {
-    await db.run("DELETE FROM items WHERE id = $1", [id]);
+    await db.run("DELETE FROM items WHERE id = ?", [id]);
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -491,7 +491,7 @@ app.get('/api/leaderboard/weeklyTop', authenticateToken, async (req, res, next) 
           LEFT JOIN transactions t 
             ON t.to_user_id = u.id 
            AND t.type = 'academic' 
-           AND t.created_at >= NOW() - INTERVAL '7 days'
+           AND t.created_at >= DATETIME('now', '-7 days')
           WHERE u.role = 'student'
           GROUP BY u.id, u.name, u.username, u.avatar_config
           ORDER BY weekly_points DESC
@@ -532,17 +532,17 @@ app.post('/api/students', authenticateToken, async (req, res, next) => {
     let isUnique = false;
     while (!isUnique) {
         username = name.toLowerCase().replace(/\s/g, '').replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c') + Math.floor(Math.random() * 1000);
-        const existing = await db.get("SELECT id FROM users WHERE username = $1", [username]);
+        const existing = await db.get("SELECT id FROM users WHERE username = ?", [username]);
         if (!existing) isUnique = true;
     }
     
     const password = Math.random().toString(36).slice(-8);
     const hash = await bcrypt.hash(password, 10);
-    const result = await db.run("INSERT INTO users (username, password, role, name) VALUES ($1, $2, 'student', $3) RETURNING id", [username, hash, name]);
-    const userId = result.rows[0].id;
+    const result = await db.run("INSERT INTO users (username, password, role, name) VALUES (?, ?, 'student', ?)", [username, hash, name]);
+    const userId = result.id;
     
     // Init points
-    await db.run("INSERT INTO points (user_id, total_points, spendable_points) VALUES ($1, 0, 0)", [userId]);
+    await db.run("INSERT INTO points (user_id, total_points, spendable_points) VALUES (?, 0, 0)", [userId]);
     
     res.json({ id: userId, username, password, name });
   } catch (err) {
@@ -598,33 +598,30 @@ app.post('/api/points', authenticateToken, async (req, res, next) => {
   const parsedAmount = parseInt(amount) || 0;
 
   const givePoints = async (uid, amt, rsn) => {
-    // 1. Puan satırı var mı kontrol et, yoksa 0 ile oluştur (PostgreSQL ON CONFLICT)
+    // 1. Puan satırı var mı kontrol et, yoksa 0 ile oluştur (SQLite OR IGNORE)
     await db.run(`
-      INSERT INTO points (user_id, total_points, spendable_points) 
-      VALUES ($1, 0, 0) 
-      ON CONFLICT (user_id) DO NOTHING`, [uid]);
+      INSERT OR IGNORE INTO points (user_id, total_points, spendable_points) 
+      VALUES (?, 0, 0)`, [uid]);
 
     // 2. PUANI GÜNCELLE
     // Negatif puan durumunda hem toplam hem harcanabilir puan düşmeli
-    const updateQuery = `
+    await db.run(`
       UPDATE points 
-      SET total_points = total_points + $1, 
-          spendable_points = spendable_points + $1 
-      WHERE user_id = $2 
-      RETURNING total_points, spendable_points`;
+      SET total_points = total_points + ?, 
+          spendable_points = spendable_points + ? 
+      WHERE user_id = ?`, [amt, amt, uid]);
     
-    const updateRes = await db.run(updateQuery, [amt, uid]);
-    const updated = updateRes.rows[0];
+    const updated = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = ?", [uid]);
 
     // Harcanabilir puanın 0'ın altına düşmemesini sağlayalım (opsiyonel ama güvenli)
     if (updated.spendable_points < 0) {
-      await db.run("UPDATE points SET spendable_points = 0 WHERE user_id = $1", [uid]);
+      await db.run("UPDATE points SET spendable_points = 0 WHERE user_id = ?", [uid]);
       updated.spendable_points = 0;
     }
 
     // 3. Log kaydı
     await db.run(
-      "INSERT INTO transactions (from_user_id, to_user_id, amount, reason, type) VALUES ($1, $2, $3, $4, 'academic')",
+      "INSERT INTO transactions (from_user_id, to_user_id, amount, reason, type) VALUES (?, ?, ?, ?, 'academic')",
       [req.user.id, uid, amt, rsn]
     );
 
@@ -691,24 +688,22 @@ app.get('/api/transactions', authenticateToken, async (req, res, next) => {
   const { type, from_user_id, to_user_id, start, end, export: exportFmt } = req.query;
   const conditions = [];
   const params = [];
-  let pIdx = 1;
 
   // Security: Students can only see transactions where they are the recipient or sender
   if (req.user.role === 'student') {
-    conditions.push(`(t.from_user_id = $${pIdx} OR t.to_user_id = $${pIdx})`);
-    params.push(req.user.id);
-    pIdx++;
+    conditions.push(`(t.from_user_id = ? OR t.to_user_id = ?)`);
+    params.push(req.user.id, req.user.id);
   } else if (from_user_id) {
-    conditions.push(`t.from_user_id = $${pIdx++}`);
+    conditions.push(`t.from_user_id = ?`);
     params.push(from_user_id);
   } else if (to_user_id) {
-    conditions.push(`t.to_user_id = $${pIdx++}`);
+    conditions.push(`t.to_user_id = ?`);
     params.push(to_user_id);
   }
 
-  if (type) { conditions.push(`t.type = $${pIdx++}`); params.push(type); }
-  if (start) { conditions.push(`t.created_at >= $${pIdx++}`); params.push(start); }
-  if (end) { conditions.push(`t.created_at <= $${pIdx++}`); params.push(end); }
+  if (type) { conditions.push(`t.type = ?`); params.push(type); }
+  if (start) { conditions.push(`t.created_at >= ?`); params.push(start); }
+  if (end) { conditions.push(`t.created_at <= ?`); params.push(end); }
   
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const sql = `
@@ -747,7 +742,7 @@ app.get('/api/messages', authenticateToken, async (req, res, next) => {
     }
     
     try {
-      const rows = await db.all(`SELECT m.*, u.name as sender_name FROM messages m JOIN users u ON m.sender_id = u.id WHERE group_type = $1 ORDER BY created_at ASC LIMIT 50`, 
+      const rows = await db.all(`SELECT m.*, u.name as sender_name FROM messages m JOIN users u ON m.sender_id = u.id WHERE group_type = ? ORDER BY created_at ASC LIMIT 50`, 
           [group_type]);
       res.json(rows);
     } catch (err) {
@@ -771,11 +766,11 @@ app.post('/api/messages', authenticateToken, async (req, res, next) => {
     }
     
     try {
-      const result = await db.run("INSERT INTO messages (sender_id, content, group_type) VALUES ($1, $2, $3) RETURNING id", 
+      const result = await db.run("INSERT INTO messages (sender_id, content, group_type) VALUES (?, ?, ?)", 
           [req.user.id, content, group_type]);
       
       const message = {
-          id: result.rows[0].id,
+          id: result.id,
           sender_id: req.user.id,
           sender_name: req.user.name,
           content,
@@ -810,14 +805,14 @@ app.post('/api/notifications', authenticateToken, async (req, res, next) => {
   
   try {
     if (user_id) {
-      const result = await db.run("INSERT INTO notifications (user_id, message) VALUES ($1, $2) RETURNING id", [user_id, message]);
-      const id = result.rows[0].id;
+      const result = await db.run("INSERT INTO notifications (user_id, message) VALUES (?, ?)", [user_id, message]);
+      const id = result.id;
       io.emit('notification_new', { id, user_id, message });
       res.json({ success: true, id });
     } else {
       const rows = await db.all("SELECT id FROM users WHERE role = 'student'");
       for (const r of rows) {
-        await db.run("INSERT INTO notifications (user_id, message) VALUES ($1, $2)", [r.id, message]);
+        await db.run("INSERT INTO notifications (user_id, message) VALUES (?, ?)", [r.id, message]);
       }
       io.emit('notification_broadcast', { message });
       res.json({ success: true });
@@ -829,7 +824,7 @@ app.post('/api/notifications', authenticateToken, async (req, res, next) => {
 
 app.get('/api/notifications', authenticateToken, async (req, res, next) => {
   try {
-    const rows = await db.all("SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50", [req.user.id]);
+    const rows = await db.all("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", [req.user.id]);
     res.json(rows);
   } catch (err) {
     next(err);
@@ -840,7 +835,7 @@ app.get('/api/users/:id/notifications', authenticateToken, async (req, res, next
   if (req.user.role !== 'teacher') return res.status(403).json({ error: 'Yetkisiz erişim' });
   const { id } = req.params;
   try {
-    const rows = await db.all("SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50", [id]);
+    const rows = await db.all("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", [id]);
     res.json(rows);
   } catch (err) {
     next(err);
@@ -851,7 +846,7 @@ app.post('/api/notifications/read', authenticateToken, async (req, res, next) =>
   const { id } = req.body;
   if (!id) return res.status(400).json({ error: 'Bildirim ID gereklidir' });
   try {
-    await db.run("UPDATE notifications SET read = TRUE WHERE id = $1 AND user_id = $2", [id, req.user.id]);
+    await db.run("UPDATE notifications SET read = 1 WHERE id = ? AND user_id = ?", [id, req.user.id]);
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -877,8 +872,8 @@ app.post('/api/attendance/start', authenticateToken, async (req, res, next) => {
     for (const s of students) {
       await db.run(`
         INSERT INTO attendance (student_id, status, updated_at) 
-        VALUES ($1, 'present', NOW())
-        ON CONFLICT (student_id) DO UPDATE SET status = 'present', updated_at = NOW()
+        VALUES (?, 'present', CURRENT_TIMESTAMP)
+        ON CONFLICT (student_id) DO UPDATE SET status = 'present', updated_at = CURRENT_TIMESTAMP
       `, [s.id]);
       // Görev kontrolü
       await checkMissionCompletion(s.id, 'attendance');
@@ -899,9 +894,9 @@ app.post('/api/attendance/toggle', authenticateToken, async (req, res, next) => 
     // Daha sağlam bir güncelleme için UPSERT kullanalım
     await db.run(`
       INSERT INTO attendance (student_id, status, updated_at)
-      VALUES ($1, $2, NOW())
-      ON CONFLICT (student_id) DO UPDATE SET status = $2, updated_at = NOW()
-    `, [student_id, status]);
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT (student_id) DO UPDATE SET status = ?, updated_at = CURRENT_TIMESTAMP
+    `, [student_id, status, status]);
     
     // Eğer 'present' yapıldıysa görev kontrolü
     if (status === 'present') {
@@ -920,7 +915,7 @@ app.get('/api/me/weeklyPoints', authenticateToken, async (req, res, next) => {
     const row = await db.get(`
       SELECT COALESCE(SUM(amount),0) as weekly_points
       FROM transactions
-      WHERE to_user_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
+      WHERE to_user_id = ? AND created_at >= datetime('now', '-7 days')
     `, [req.user.id]);
     res.json({ weekly_points: row.weekly_points });
   } catch (err) {
@@ -931,7 +926,7 @@ app.get('/api/me/weeklyPoints', authenticateToken, async (req, res, next) => {
 // --- Wardrobe (Saved Avatar Combos) ---
 app.get('/api/me/wardrobe', authenticateToken, async (req, res, next) => {
   try {
-    const rows = await db.all("SELECT id, name, config, created_at FROM user_wardrobe WHERE user_id = $1 ORDER BY created_at DESC", [req.user.id]);
+    const rows = await db.all("SELECT id, name, config, created_at FROM user_wardrobe WHERE user_id = ? ORDER BY created_at DESC", [req.user.id]);
     res.json(rows.map(r => ({ ...r, config: (() => { try { return JSON.parse(r.config || '{}'); } catch { return {}; } })() })));
   } catch (err) {
     next(err);
@@ -945,8 +940,8 @@ app.post('/api/me/wardrobe', authenticateToken, async (req, res, next) => {
   const cfgStr = JSON.stringify(config || {});
   
   try {
-    const result = await db.run("INSERT INTO user_wardrobe (user_id, name, config) VALUES ($1, $2, $3) RETURNING id", [req.user.id, nm, cfgStr]);
-    res.json({ id: result.rows[0].id, name: nm, config, created_at: new Date() });
+    const result = await db.run("INSERT INTO user_wardrobe (user_id, name, config) VALUES (?, ?, ?)", [req.user.id, nm, cfgStr]);
+    res.json({ id: result.id, name: nm, config, created_at: new Date() });
   } catch (err) {
     next(err);
   }
@@ -955,7 +950,7 @@ app.post('/api/me/wardrobe', authenticateToken, async (req, res, next) => {
 app.delete('/api/me/wardrobe/:id', authenticateToken, async (req, res, next) => {
   const { id } = req.params;
   try {
-    await db.run("DELETE FROM user_wardrobe WHERE id = $1 AND user_id = $2", [id, req.user.id]);
+    await db.run("DELETE FROM user_wardrobe WHERE id = ? AND user_id = ?", [id, req.user.id]);
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -965,9 +960,9 @@ app.delete('/api/me/wardrobe/:id', authenticateToken, async (req, res, next) => 
 app.post('/api/me/wardrobe/:id/apply', authenticateToken, async (req, res, next) => {
   const { id } = req.params;
   try {
-    const row = await db.get("SELECT config FROM user_wardrobe WHERE id = $1 AND user_id = $2", [id, req.user.id]);
+    const row = await db.get("SELECT config FROM user_wardrobe WHERE id = ? AND user_id = ?", [id, req.user.id]);
     if (!row) return res.status(404).json({ error: 'Bulunamadı' });
-    await db.run("UPDATE users SET avatar_config = $1 WHERE id = $2", [row.config, req.user.id]);
+    await db.run("UPDATE users SET avatar_config = ? WHERE id = ?", [row.config, req.user.id]);
     res.json({ success: true });
   } catch (err) {
     next(err);
@@ -977,9 +972,9 @@ app.post('/api/me/wardrobe/:id/apply', authenticateToken, async (req, res, next)
 app.get('/api/me/weeklyPointsDetailed', authenticateToken, async (req, res, next) => {
   try {
     const rows = await db.all(`
-      SELECT created_at::date as day, COALESCE(SUM(amount),0) as points
+      SELECT date(created_at) as day, COALESCE(SUM(amount),0) as points
       FROM transactions
-      WHERE to_user_id = $1 AND created_at >= CURRENT_DATE - INTERVAL '6 days'
+      WHERE to_user_id = ? AND created_at >= datetime('now', '-6 days')
       GROUP BY day
       ORDER BY day ASC
     `, [req.user.id]);
@@ -1020,7 +1015,7 @@ app.get('/api/users/:id/rosettes', authenticateToken, async (req, res, next) => 
           SELECT ur.*, r.name, r.description, r.icon 
           FROM user_rosettes ur 
           JOIN rosettes r ON ur.rosette_id = r.id 
-          WHERE ur.user_id = $1`, 
+          WHERE ur.user_id = ?`, 
           [id]);
       res.json(rows);
     } catch (err) {
@@ -1035,13 +1030,13 @@ app.post('/api/rosettes/assign', authenticateToken, async (req, res, next) => {
     
     try {
       // Önce öğrenci ve rozet var mı kontrol et
-      const student = await db.get("SELECT id FROM users WHERE id = $1 AND role = 'student'", [student_id]);
+      const student = await db.get("SELECT id FROM users WHERE id = ? AND role = 'student'", [student_id]);
       if (!student) return res.status(404).json({ error: 'Öğrenci bulunamadı' });
       
-      const rosette = await db.get("SELECT id FROM rosettes WHERE id = $1", [rosette_id]);
+      const rosette = await db.get("SELECT id FROM rosettes WHERE id = ?", [rosette_id]);
       if (!rosette) return res.status(404).json({ error: 'Rozet bulunamadı' });
 
-      await db.run("INSERT INTO user_rosettes (user_id, rosette_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [student_id, rosette_id]);
+      await db.run("INSERT INTO user_rosettes (user_id, rosette_id) VALUES (?, ?) ON CONFLICT DO NOTHING", [student_id, rosette_id]);
       io.emit('rosette_awarded', { student_id, rosette_id });
       res.json({ success: true });
     } catch (err) {
@@ -1068,8 +1063,8 @@ app.post('/api/announcements', authenticateToken, async (req, res, next) => {
   if (!title || !content) return res.status(400).json({ error: 'Başlık ve içerik gereklidir' });
   
   try {
-    const result = await db.run("INSERT INTO announcements (title, content) VALUES ($1, $2) RETURNING id", [title, content]);
-    res.json({ id: result.rows[0].id, title, content, created_at: new Date() });
+    const result = await db.run("INSERT INTO announcements (title, content) VALUES (?, ?)", [title, content]);
+    res.json({ id: result.id, title, content, created_at: new Date() });
   } catch (err) {
     next(err);
   }
@@ -1082,8 +1077,8 @@ app.get('/api/missions', authenticateToken, async (req, res, next) => {
     const missions = await db.all(`
       SELECT m.*, COALESCE(um.status, 'pending') as status
       FROM daily_missions m
-      LEFT JOIN user_missions um ON m.id = um.mission_id AND um.user_id = $1
-      WHERE m.created_at = $2
+      LEFT JOIN user_missions um ON m.id = um.mission_id AND um.user_id = ?
+      WHERE m.created_at = ?
     `, [req.user.id, today]);
     res.json(missions);
   } catch (err) {
@@ -1099,7 +1094,7 @@ app.get('/api/polls', authenticateToken, async (req, res, next) => {
     const rows = await db.all(`
       SELECT p.*, 
         (SELECT COUNT(*) FROM poll_votes pv WHERE pv.poll_id = p.id) as total_votes,
-        (SELECT option_index FROM poll_votes pv WHERE pv.poll_id = p.id AND pv.user_id = $1) as user_vote
+        (SELECT option_index FROM poll_votes pv WHERE pv.poll_id = p.id AND pv.user_id = ?) as user_vote
       FROM polls p
       WHERE expires_at > CURRENT_TIMESTAMP OR expires_at IS NULL
       ORDER BY created_at DESC
@@ -1107,7 +1102,7 @@ app.get('/api/polls', authenticateToken, async (req, res, next) => {
     
     // Oyların dağılımını hesapla
     const polls = await Promise.all(rows.map(async (p) => {
-      const votes = await db.all("SELECT option_index, COUNT(*) as count FROM poll_votes WHERE poll_id = $1 GROUP BY option_index", [p.id]);
+      const votes = await db.all("SELECT option_index, COUNT(*) as count FROM poll_votes WHERE poll_id = ? GROUP BY option_index", [p.id]);
       const results = {};
       votes.forEach(v => {
         results[v.option_index] = parseInt(v.count);
@@ -1138,9 +1133,9 @@ app.post('/api/polls', authenticateToken, async (req, res, next) => {
   const expires_at = expires_in_hours ? new Date(Date.now() + expires_in_hours * 60 * 60 * 1000) : null;
   
   try {
-    const result = await db.run("INSERT INTO polls (question, options, expires_at) VALUES ($1, $2, $3) RETURNING id", 
+    const result = await db.run("INSERT INTO polls (question, options, expires_at) VALUES (?, ?, ?)", 
       [question, JSON.stringify(options), expires_at]);
-    const poll = { id: result.rows[0].id, question, options, expires_at, created_at: new Date(), total_votes: 0 };
+    const poll = { id: result.id, question, options, expires_at, created_at: new Date(), total_votes: 0 };
     io.emit('new_poll', poll);
     res.json(poll);
   } catch (err) {
@@ -1155,7 +1150,7 @@ app.post('/api/polls/:id/vote', authenticateToken, async (req, res, next) => {
   if (option_index === undefined) return res.status(400).json({ error: 'Seçenek belirtilmedi' });
   
   try {
-    const poll = await db.get("SELECT expires_at FROM polls WHERE id = $1", [id]);
+    const poll = await db.get("SELECT expires_at FROM polls WHERE id = ?", [id]);
     if (!poll) return res.status(404).json({ error: 'Oylama bulunamadı' });
     if (poll.expires_at && new Date(poll.expires_at) < new Date()) {
       return res.status(400).json({ error: 'Oylama süresi dolmuş' });
@@ -1163,12 +1158,12 @@ app.post('/api/polls/:id/vote', authenticateToken, async (req, res, next) => {
     
     await db.run(`
       INSERT INTO poll_votes (poll_id, user_id, option_index) 
-      VALUES ($1, $2, $3)
-      ON CONFLICT (poll_id, user_id) DO UPDATE SET option_index = $3, voted_at = CURRENT_TIMESTAMP
-    `, [id, req.user.id, option_index]);
+      VALUES (?, ?, ?)
+      ON CONFLICT (poll_id, user_id) DO UPDATE SET option_index = ?, voted_at = CURRENT_TIMESTAMP
+    `, [id, req.user.id, option_index, option_index]);
     
     // Güncel sonuçları gönder
-    const votes = await db.all("SELECT option_index, COUNT(*) as count FROM poll_votes WHERE poll_id = $1 GROUP BY option_index", [id]);
+    const votes = await db.all("SELECT option_index, COUNT(*) as count FROM poll_votes WHERE poll_id = ? GROUP BY option_index", [id]);
     const results = {};
     votes.forEach(v => {
       results[v.option_index] = parseInt(v.count);

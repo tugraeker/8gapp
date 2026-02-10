@@ -21,11 +21,11 @@ const ITEMS = [
 async function seed() {
     try {
         await db.run("DELETE FROM items"); 
-        // Reset ID sequence in Postgres (if using SERIAL)
-        await db.run("ALTER SEQUENCE items_id_seq RESTART WITH 1");
+        // In SQLite, resetting autoincrement is done via sqlite_sequence
+        await db.run("DELETE FROM sqlite_sequence WHERE name='items'");
 
         for (const item of ITEMS) {
-            await db.run("INSERT INTO items (name, category, cost, asset_id) VALUES ($1, $2, $3, $4)", 
+            await db.run("INSERT INTO items (name, category, cost, asset_id) VALUES (?, ?, ?, ?)", 
                 [item.name, item.category, item.cost, item.asset_id]);
         }
         
