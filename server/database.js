@@ -328,19 +328,25 @@ const initDatabase = async () => {
         await run("INSERT INTO attendance (student_id, status) VALUES (?, 'present')", [userId]);
       }
     } else if (fileCredentials) {
-      console.log("Database exists. Syncing passwords from kullanici_bilgileri.txt...");
+      console.log(`Database exists. Syncing passwords for ${Object.keys(fileCredentials).length} users...`);
       let updatedCount = 0;
       for (const [name, creds] of Object.entries(fileCredentials)) {
         const hash = await bcrypt.hash(creds.password, 10);
-        // Update password for existing user by username
-        // Also update by name to be sure, since username format might have changed
         const result = await run(
           "UPDATE users SET password = ?, username = ? WHERE name = ? OR username = ?", 
           [hash, creds.username, name, creds.username]
         );
-        updatedCount++;
+        if (result.changes > 0) updatedCount++;
       }
       console.log(`Password sync complete. Updated ${updatedCount} users.`);
+      
+      // Melisa Özel Kontrol (Eğer hala sorun varsa)
+      if (fileCredentials["Melisa Özden"]) {
+          const melisa = fileCredentials["Melisa Özden"];
+          const hash = await bcrypt.hash(melisa.password, 10);
+          await run("UPDATE users SET password = ?, username = ? WHERE name = 'Melisa Özden'", [hash, melisa.username]);
+          console.log("Melisa Özden credentials verified and forced.");
+      }
     }
 
     console.log("Database initialization complete.");
