@@ -215,12 +215,6 @@ const initDatabase = async () => {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS daily_spins (
-      user_id INTEGER PRIMARY KEY, 
-      last_spin_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )`);
-    
     await run(`CREATE TABLE IF NOT EXISTS attendance (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       student_id INTEGER UNIQUE,
@@ -229,7 +223,7 @@ const initDatabase = async () => {
       FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS daily_missions (
+    await run(`CREATE TABLE IF NOT EXISTS weekly_missions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT,
       description TEXT,
@@ -246,7 +240,7 @@ const initDatabase = async () => {
       completed_at DATETIME,
       UNIQUE(user_id, mission_id),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (mission_id) REFERENCES daily_missions(id) ON DELETE CASCADE
+      FOREIGN KEY (mission_id) REFERENCES weekly_missions(id) ON DELETE CASCADE
     )`);
 
     await run(`CREATE TABLE IF NOT EXISTS polls (

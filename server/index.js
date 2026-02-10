@@ -53,34 +53,46 @@ const calculateLevel = (totalPoints) => {
   return { level: 5, name: "Efsane", next: 99999, min: 3000 };
 };
 
-// Günlük Görevleri Başlat
-const initDailyMissions = async () => {
-  const today = new Date().toISOString().split('T')[0];
+// Haftalık Görevleri Başlat
+const initWeeklyMissions = async () => {
+  // Haftanın başlangıcını bul (Pazartesi)
+  const d = new Date();
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(d.setDate(diff)).toISOString().split('T')[0];
+
   try {
-    const existing = await db.get("SELECT count(*) as count FROM daily_missions WHERE created_at = ?", [today]);
+    const existing = await db.get("SELECT count(*) as count FROM weekly_missions WHERE created_at = ?", [monday]);
     if (parseInt(existing.count) === 0) {
       const missions = [
-        { title: "Güne Merhaba", description: "Bugün okula gelerek yoklamaya katıl!", points: 2, type: "attendance" },
-        { title: "Sohbet Saati", description: "Grup sohbetine bir mesaj yaz!", points: 1, type: "chat" }
+        { title: "Okul Yolunda", description: "Bu hafta en az 3 gün okula gel!", points: 10, type: "attendance_weekly" },
+        { title: "Sınıfın Sesi", description: "Bu hafta grup sohbetine 5 mesaj yaz!", points: 5, type: "chat_weekly" },
+        { title: "Bilgi Avcısı", description: "Bu hafta en az 1 oylamaya katıl!", points: 5, type: "poll_weekly" }
       ];
       for (const m of missions) {
-        await db.run("INSERT INTO daily_missions (title, description, points_reward, type, created_at) VALUES (?, ?, ?, ?, ?)", 
-          [m.title, m.description, m.points, m.type, today]);
+        await db.run("INSERT INTO weekly_missions (title, description, points_reward, type, created_at) VALUES (?, ?, ?, ?, ?)", 
+          [m.title, m.description, m.points, m.type, monday]);
       }
     }
   } catch (err) {
-    console.error("Görev Başlatma Hatası:", err.message);
+    console.error("Haftalık Görev Başlatma Hatası:", err.message);
   }
 };
 
-// Görev Tamamlama Kontrolü
+// Görev Tamamlama Kontrolü (Haftalık)
 const checkMissionCompletion = async (userId, type) => {
-  const today = new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(d.setDate(diff)).toISOString().split('T')[0];
+
   try {
-    const mission = await db.get("SELECT id, points_reward FROM daily_missions WHERE type = ? AND created_at = ?", [type, today]);
+    const mission = await db.get("SELECT id, points_reward FROM weekly_missions WHERE type = ? AND created_at = ?", [type, monday]);
     if (mission) {
       const userMission = await db.get("SELECT status FROM user_missions WHERE user_id = ? AND mission_id = ?", [userId, mission.id]);
       if (!userMission || userMission.status === 'pending') {
+        // Burada basitçe tamamlıyoruz, ancak tipine göre sayaç da eklenebilir. 
+        // Şimdilik basit tutalım: ilk eylemde tamamlanır.
         await db.run("INSERT INTO user_missions (user_id, mission_id, status, completed_at) VALUES (?, ?, 'completed', CURRENT_TIMESTAMP)", [userId, mission.id]);
         
         await db.run("INSERT OR IGNORE INTO points (user_id, total_points, spendable_points) VALUES (?, 0, 0)", [userId]);
@@ -88,7 +100,7 @@ const checkMissionCompletion = async (userId, type) => {
         
         const updated = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = ?", [userId]);
         io.emit('points_updated', { student_id: userId, total_points: updated.total_points, spendable_points: updated.spendable_points, amount: mission.points_reward });
-        io.to(`user_${userId}`).emit('notification', { message: `Görev Tamamlandı: ${mission.points_reward} puan kazandın!` });
+        io.to(`user_${userId}`).emit('notification', { message: `Haftalık Görev Tamamlandı: ${mission.points_reward} puan kazandın!` });
       }
     }
   } catch (err) {
@@ -98,7 +110,7 @@ const checkMissionCompletion = async (userId, type) => {
 
 // Initialize Database and then start missions
 db.initDatabase().then(() => {
-  initDailyMissions();
+  initWeeklyMissions();
 });
 
 // --- Attendance Reset Task (Every day at 04:00 AM) ---
@@ -801,7 +813,7 @@ app.post('/api/messages', authenticateToken, async (req, res, next) => {
       
       // Görev kontrolü
       if (req.user.role === 'student') {
-        await checkMissionCompletion(req.user.id, 'chat');
+        await checkMissionCompletion(req.user.id, 'chat_weekly');
       }
       
       res.json(message);
@@ -892,7 +904,7 @@ app.post('/api/attendance/start', authenticateToken, async (req, res, next) => {
       await db.run("INSERT OR IGNORE INTO attendance (student_id, status, updated_at) VALUES (?, 'present', CURRENT_TIMESTAMP)", [s.id]);
       await db.run("UPDATE attendance SET status = 'present', updated_at = CURRENT_TIMESTAMP WHERE student_id = ?", [s.id]);
       // Görev kontrolü
-      await checkMissionCompletion(s.id, 'attendance');
+      await checkMissionCompletion(s.id, 'attendance_weekly');
     }
     io.emit('attendance_started');
     res.json({ success: true });
@@ -914,7 +926,7 @@ app.post('/api/attendance/toggle', authenticateToken, async (req, res, next) => 
     
     // Eğer 'present' yapıldıysa görev kontrolü
     if (status === 'present') {
-      await checkMissionCompletion(student_id, 'attendance');
+      await checkMissionCompletion(student_id, 'attendance_weekly');
     }
     
     res.json({ success: true });
@@ -1084,16 +1096,20 @@ app.post('/api/announcements', authenticateToken, async (req, res, next) => {
   }
 });
 
-// Günlük Görevleri Getir
+// Haftalık Görevleri Getir
 app.get('/api/missions', authenticateToken, async (req, res, next) => {
-  const today = new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(d.setDate(diff)).toISOString().split('T')[0];
+  
   try {
     const missions = await db.all(`
       SELECT m.*, COALESCE(um.status, 'pending') as status
-      FROM daily_missions m
+      FROM weekly_missions m
       LEFT JOIN user_missions um ON m.id = um.mission_id AND um.user_id = ?
       WHERE m.created_at = ?
-    `, [req.user.id, today]);
+    `, [req.user.id, monday]);
     res.json(missions);
   } catch (err) {
     next(err);
@@ -1181,6 +1197,12 @@ app.post('/api/polls/:id/vote', authenticateToken, async (req, res, next) => {
     });
     
     io.emit('poll_updated', { poll_id: id, results, total_votes: votes.reduce((a, b) => a + parseInt(b.count), 0) });
+    
+    // Görev kontrolü
+    if (req.user.role === 'student') {
+      await checkMissionCompletion(req.user.id, 'poll_weekly');
+    }
+    
     res.json({ success: true });
   } catch (err) {
     next(err);

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { MessageSquare, ShoppingBag, Trophy, Calendar, Edit, LogOut, Box, Sparkles, Timer, Layers, Megaphone, Disc, CheckSquare } from 'lucide-react';
+import { MessageSquare, ShoppingBag, Trophy, Calendar, Edit, LogOut, Box, Sparkles, Timer, Layers, Megaphone, CheckSquare } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import LayeredAvatar from '../components/LayeredAvatar';
@@ -381,11 +381,11 @@ const StudentDashboard: React.FC = () => {
             </div>
         </div>
 
-        {/* Daily Missions Section */}
+        {/* Weekly Missions Section */}
         {missions.length > 0 && (
           <div className="mb-6 w-full">
             <h2 className="text-left font-bold text-gray-700 mb-2 flex items-center gap-2 uppercase tracking-tight text-xs">
-              <Sparkles size={16} className="text-purple-500" /> Günlük Görevler
+              <Sparkles size={16} className="text-purple-500" /> Haftalık Görevler
             </h2>
             <div className="space-y-2">
               {missions.map((m: any) => (
@@ -836,7 +836,6 @@ const StudentDashboard: React.FC = () => {
           </div>
         </div>
       )}
-      {/* Daily Spin Modal */}
     </div>
   );
 };
