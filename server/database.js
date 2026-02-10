@@ -330,22 +330,33 @@ const initDatabase = async () => {
     } else if (fileCredentials) {
       console.log(`Database exists. Syncing passwords for ${Object.keys(fileCredentials).length} users...`);
       let updatedCount = 0;
+      let missingUsers = [];
+      
       for (const [name, creds] of Object.entries(fileCredentials)) {
         const hash = await bcrypt.hash(creds.password, 10);
-        const result = await run(
-          "UPDATE users SET password = ?, username = ? WHERE name = ? OR username = ?", 
-          [hash, creds.username, name, creds.username]
+        // Önce isme göre dene, sonra kullanıcı adına göre
+        let result = await run(
+          "UPDATE users SET password = ?, username = ? WHERE name = ?", 
+          [hash, creds.username, name]
         );
-        if (result.changes > 0) updatedCount++;
+        
+        if (result.changes === 0) {
+          // İsimle bulunamadıysa kullanıcı adıyla dene
+          result = await run(
+            "UPDATE users SET password = ? WHERE username = ?", 
+            [hash, creds.username]
+          );
+        }
+
+        if (result.changes > 0) {
+          updatedCount++;
+        } else {
+          missingUsers.push(name);
+        }
       }
       console.log(`Password sync complete. Updated ${updatedCount} users.`);
-      
-      // Melisa Özel Kontrol (Eğer hala sorun varsa)
-      if (fileCredentials["Melisa Özden"]) {
-          const melisa = fileCredentials["Melisa Özden"];
-          const hash = await bcrypt.hash(melisa.password, 10);
-          await run("UPDATE users SET password = ?, username = ? WHERE name = 'Melisa Özden'", [hash, melisa.username]);
-          console.log("Melisa Özden credentials verified and forced.");
+      if (missingUsers.length > 0) {
+        console.warn(`Could not find these users in DB: ${missingUsers.join(", ")}`);
       }
     }
 
