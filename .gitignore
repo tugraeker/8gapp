@@ -37,4 +37,4 @@ database.sqlite
 Claudechat.txt
 
 # Sensitive Data
-kullanici_bilgileri.txt
+# kullanici_bilgileri.txt (User wants this kept for now)

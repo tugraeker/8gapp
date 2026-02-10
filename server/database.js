@@ -1,5 +1,6 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
@@ -63,6 +64,42 @@ function generateCredentials(fullName) {
   const username = `${firstName}.${lastNameInitial}`;
   const passwordPlain = `sifre${Math.floor(1000 + Math.random() * 9000)}`;
   return { username, passwordPlain };
+}
+
+function parseCredentialsFile() {
+  try {
+    const filePath = path.join(__dirname, '..', 'kullanici_bilgileri.txt');
+    if (!fs.existsSync(filePath)) return null;
+    
+    const content = fs.readFileSync(filePath, 'utf8');
+    const lines = content.split('\n');
+    const credentials = {}; // name -> { username, password }
+    
+    let currentName = null;
+    let currentUsername = null;
+    let currentPassword = null;
+    
+    for (let line of lines) {
+      line = line.trim();
+      if (line.startsWith('Öğrenci:')) {
+        currentName = line.replace('Öğrenci:', '').trim();
+      } else if (line.startsWith('Kullanıcı Adı:')) {
+        currentUsername = line.replace('Kullanıcı Adı:', '').trim();
+      } else if (line.startsWith('Şifre:')) {
+        currentPassword = line.replace('Şifre:', '').trim();
+        if (currentName && currentUsername && currentPassword) {
+          credentials[currentName] = { username: currentUsername, password: currentPassword };
+          currentName = null;
+          currentUsername = null;
+          currentPassword = null;
+        }
+      }
+    }
+    return credentials;
+  } catch (err) {
+    console.error("Error parsing credentials file:", err);
+    return null;
+  }
 }
 
 // Veritabanı Başlatma Fonksiyonu
@@ -267,10 +304,24 @@ const initDatabase = async () => {
 
     // Seed Students
     const studentCheck = await get("SELECT count(*) as count FROM users WHERE role = 'student'");
+    const fileCredentials = parseCredentialsFile();
+
     if (studentCheck.count === 0) {
       console.log("Seeding students...");
       for (const studentName of STUDENTS) {
-        const { username, passwordPlain } = generateCredentials(studentName);
+        let username, passwordPlain;
+        
+        if (fileCredentials && fileCredentials[studentName]) {
+          username = fileCredentials[studentName].username;
+          passwordPlain = fileCredentials[studentName].password;
+          console.log(`Using file credentials for seeding ${studentName}`);
+        } else {
+          const creds = generateCredentials(studentName);
+          username = creds.username;
+          passwordPlain = creds.passwordPlain;
+          console.log(`Generating random credentials for ${studentName}`);
+        }
+        
         const hash = await bcrypt.hash(passwordPlain, 10);
         
         const result = await run(
@@ -281,9 +332,15 @@ const initDatabase = async () => {
         
         await run("INSERT INTO points (user_id, total_points, spendable_points) VALUES (?, 0, 0)", [userId]);
         await run("INSERT INTO attendance (student_id, status) VALUES (?, 'present')", [userId]);
-        
-        console.log(`Student Created: ${studentName} | Username: ${username} | Password: ${passwordPlain}`);
       }
+    } else if (fileCredentials) {
+      console.log("Database exists. Syncing passwords from kullanici_bilgileri.txt...");
+      for (const [name, creds] of Object.entries(fileCredentials)) {
+        const hash = await bcrypt.hash(creds.password, 10);
+        // Update password for existing user by username
+        await run("UPDATE users SET password = ? WHERE username = ?", [hash, creds.username]);
+      }
+      console.log("Password sync complete.");
     }
 
     console.log("Database initialization complete.");
