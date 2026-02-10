@@ -30,10 +30,18 @@ async function updatePasswords() {
     console.log(`Found ${updates.length} users to update.`);
     
     for (const update of updates) {
-        // Handle potential comma in DB username for i̇nci.y
         let dbUsername = update.username;
+        
+        // Fix potential typos in DB
+        if (dbUsername === 'kayra.i̇') {
+            const typoUser = await db.get("SELECT * FROM users WHERE username = 'kayyra.i̇'");
+            if (typoUser) {
+                console.log('Fixing typo: kayyra.i̇ -> kayra.i̇');
+                await db.run("UPDATE users SET username = 'kayra.i̇' WHERE username = 'kayyra.i̇'");
+            }
+        }
+
         if (dbUsername === 'i̇nci.y') {
-            // Check if it exists with comma
             const userWithComma = await db.get("SELECT * FROM users WHERE username = 'i̇nci.y,'");
             if (userWithComma) {
                 console.log('Fixing username for i̇nci.y (removing comma)');
