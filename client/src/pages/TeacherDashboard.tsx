@@ -290,15 +290,17 @@ const TeacherDashboard: React.FC = () => {
       });
       
       // Reset states and close modal
-      setShowModal(false);
-      setSelectedStudent(null);
-      setSelectedRecipientId(null);
-      setReason('');
-      setAmountInput('');
-      setFeedback('');
-      
-      // Refresh data
-      fetchStudents();
+      setFeedback('Puan başarıyla verildi!');
+      setTimeout(() => {
+        setShowModal(false);
+        setSelectedStudent(null);
+        setSelectedRecipientId(null);
+        setReason('');
+        setAmountInput('');
+        setFeedback('');
+        // Refresh data
+        fetchStudents();
+      }, 1500);
     } catch (e: any) {
       alert(e.response?.data?.error || 'Puan verilirken bir hata oluştu');
     } finally {

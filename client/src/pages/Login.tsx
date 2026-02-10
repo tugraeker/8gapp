@@ -45,6 +45,11 @@ const Login: React.FC = () => {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="bg-blue-50 border-blue-200 border p-3 rounded-xl mb-2">
+            <p className="text-blue-800 text-[11px] leading-relaxed">
+              <strong>Bilgilendirme:</strong> Giriş yapmakta sorun yaşıyorsanız kullanıcı adınızın <code>ad.soyad_ilk_harfi</code> (örneğin: <code>tugra.e</code>) formatında olduğundan emin olun. Şifreniz size özel tanımlanan <code>sifre1234</code> formatındaki koddur.
+            </p>
+          </div>
           <div>
             <label className="block text-gray-700 text-sm font-bold mb-2 ml-1">Kullanıcı Adı</label>
             <div className="relative">

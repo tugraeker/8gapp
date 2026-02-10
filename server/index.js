@@ -171,7 +171,13 @@ app.post('/api/login', async (req, res, next) => {
     return res.status(400).json({ error: 'Kullanıcı adı ve şifre gereklidir' });
   }
 
-  const normalizedUsername = String(username).toLowerCase().trim();
+  const normalizedUsername = String(username).toLowerCase().trim()
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ş/g, 's')
+    .replace(/ı/g, 'i')
+    .replace(/ö/g, 'o')
+    .replace(/ç/g, 'c');
   
   try {
     console.log(`[Login Attempt] Username: ${normalizedUsername}`);
