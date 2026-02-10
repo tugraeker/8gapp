@@ -204,6 +204,7 @@ app.post('/api/login', async (req, res, next) => {
     }
 
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role, name: user.name }, SECRET_KEY);
+    console.log(`[Login Success] User: ${user.username}, Role: ${user.role}`);
     res.json({ 
       token, 
       user: { 
@@ -870,11 +871,8 @@ app.post('/api/attendance/start', authenticateToken, async (req, res, next) => {
     // Mevcut tüm öğrencileri yoklamaya ekle veya durumlarını 'present' yap
     const students = await db.all("SELECT id FROM users WHERE role = 'student'");
     for (const s of students) {
-      await db.run(`
-        INSERT INTO attendance (student_id, status, updated_at) 
-        VALUES (?, 'present', CURRENT_TIMESTAMP)
-        ON CONFLICT (student_id) DO UPDATE SET status = 'present', updated_at = CURRENT_TIMESTAMP
-      `, [s.id]);
+      await db.run("INSERT OR IGNORE INTO attendance (student_id, status, updated_at) VALUES (?, 'present', CURRENT_TIMESTAMP)", [s.id]);
+      await db.run("UPDATE attendance SET status = 'present', updated_at = CURRENT_TIMESTAMP WHERE student_id = ?", [s.id]);
       // Görev kontrolü
       await checkMissionCompletion(s.id, 'attendance');
     }
