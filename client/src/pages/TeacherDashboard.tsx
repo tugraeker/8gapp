@@ -79,12 +79,12 @@ const TeacherDashboard: React.FC = () => {
   const [studentRosettes, setStudentRosettes] = useState<any[]>([]);
 
   const handlePostAnnouncement = async () => {
-    if (!announcementTitle || !announcementContent) {
+    if (!announcementTitle.trim() || !announcementContent.trim()) {
         setAnnouncementFeedback('Başlık ve içerik gereklidir.');
         return;
     }
     try {
-        await api.post('/announcements', { title: announcementTitle, content: announcementContent });
+        await api.post('/announcements', { title: announcementTitle.trim(), content: announcementContent.trim() });
         setAnnouncementFeedback('Duyuru başarıyla yayınlandı!');
         setAnnouncementTitle('');
         setAnnouncementContent('');
@@ -92,20 +92,23 @@ const TeacherDashboard: React.FC = () => {
             setShowAnnouncementModal(false);
             setAnnouncementFeedback('');
         }, 1500);
-    } catch (err) {
-        setAnnouncementFeedback('Hata oluştu.');
+    } catch (err: any) {
+        setAnnouncementFeedback(err.response?.data?.error || 'Hata oluştu.');
     }
   };
 
   const handleCreatePoll = async () => {
-    if (!pollQuestion || pollOptions.some(o => !o.trim())) {
-      setPollFeedback('Soru ve tüm seçenekler gereklidir.');
+    const trimmedQuestion = pollQuestion.trim();
+    const validOptions = pollOptions.map(o => o.trim()).filter(o => o !== '');
+
+    if (!trimmedQuestion || validOptions.length < 2) {
+      setPollFeedback('Soru ve en az 2 geçerli seçenek gereklidir.');
       return;
     }
     try {
       await api.post('/polls', { 
-        question: pollQuestion, 
-        options: pollOptions.filter(o => o.trim() !== '') 
+        question: trimmedQuestion, 
+        options: validOptions
       });
       setPollFeedback('Oylama başarıyla oluşturuldu!');
       setPollQuestion('');
@@ -114,8 +117,8 @@ const TeacherDashboard: React.FC = () => {
         setShowPollModal(false);
         setPollFeedback('');
       }, 1500);
-    } catch (err) {
-      setPollFeedback('Oylama oluşturulurken hata oluştu.');
+    } catch (err: any) {
+      setPollFeedback(err.response?.data?.error || 'Oylama oluşturulurken hata oluştu.');
     }
   };
 
@@ -272,45 +275,67 @@ const TeacherDashboard: React.FC = () => {
   }, [selectedStudent]);
 
   const handleGivePoints = async () => {
+    if (!amountInput || isNaN(Number(amountInput))) {
+      alert('Lütfen geçerli bir puan girin');
+      return;
+    }
+    
+    setAttendanceLoading(true); // Reusing loading state or we could add a new one
     try {
       const targetId = selectedRecipientId ?? (selectedStudent === 'all' ? 'all' : (selectedStudent as User).id);
-      const res = await api.post('/points', {
+      await api.post('/points', {
         student_id: targetId,
         amount: amountInput,
         reason
       });
-      setFeedback(`Puan verildi: ${res.data.amount}`);
+      
+      // Reset states and close modal
       setShowModal(false);
+      setSelectedStudent(null);
+      setSelectedRecipientId(null);
       setReason('');
       setAmountInput('');
-      setTimeout(() => fetchStudents(), 250); // Let socket update first; then reconcile with server snapshot
-    } catch {
-      alert('Error giving points');
+      setFeedback('');
+      
+      // Refresh data
+      fetchStudents();
+    } catch (e: any) {
+      alert(e.response?.data?.error || 'Puan verilirken bir hata oluştu');
+    } finally {
+      setAttendanceLoading(false);
     }
   };
 
   const handleGiveRosette = async (rosetteId: number) => {
-      if (selectedStudent === 'all') return; // Rosettes are individual for now
+      if (selectedStudent === 'all') return; 
       try {
           await api.post('/rosettes/assign', {
               student_id: (selectedStudent as User).id,
               rosette_id: rosetteId
           });
-          alert('Rozet verildi!');
-          setShowModal(false);
-      } catch {
-          alert('Error giving rosette');
+          setFeedback('Rozet başarıyla verildi!');
+          setTimeout(() => {
+            setShowModal(false);
+            setSelectedStudent(null);
+            setFeedback('');
+          }, 1500);
+      } catch (e: any) {
+          alert(e.response?.data?.error || 'Rozet verilirken bir hata oluştu');
       }
   };
 
   const handleCreateStudent = async () => {
+    if (!newStudentName.trim()) {
+      alert('Öğrenci adı gereklidir.');
+      return;
+    }
     try {
-      const res = await api.post('/students', { name: newStudentName });
+      const res = await api.post('/students', { name: newStudentName.trim() });
       setLastCreatedStudent({ username: res.data.username, password: res.data.password });
       setNewStudentName('');
       fetchStudents();
-    } catch {
-      alert('Error creating student');
+    } catch (e: any) {
+      alert(e.response?.data?.error || 'Öğrenci oluşturulurken bir hata oluştu');
     }
   };
 
@@ -555,33 +580,39 @@ const TeacherDashboard: React.FC = () => {
                     </div>
 
                     <div className="flex gap-2">
-                    <button onClick={() => setShowModal(false)} className="flex-1 bg-gray-200 py-2 rounded-lg">İptal</button>
-                    <button onClick={handleGivePoints} className="flex-1 bg-blue-600 text-white py-2 rounded-lg">Onayla</button>
+                    <button onClick={() => { setShowModal(false); setSelectedStudent(null); setSelectedRecipientId(null); setFeedback(''); }} className="flex-1 bg-gray-200 py-2 rounded-lg">İptal</button>
+                    <button 
+                      onClick={handleGivePoints} 
+                      disabled={attendanceLoading}
+                      className="flex-1 bg-blue-600 text-white py-2 rounded-lg disabled:opacity-50"
+                    >
+                      {attendanceLoading ? 'İşleniyor...' : 'Onayla'}
+                    </button>
                     </div>
-                    {feedback && <div className="mt-3 text-green-600 text-sm">{feedback}</div>}
+                    {feedback && <div className="mt-3 p-2 bg-green-50 text-green-700 text-sm font-bold rounded-lg text-center">{feedback}</div>}
                 </>
             )}
 
             {activeTab === 'rosettes' && (
-                <div className="grid grid-cols-4 gap-2 max-h-60 overflow-y-auto p-1">
-                    {rosettes.map(rosette => (
-                        <div 
-                            key={rosette.id} 
-                            onClick={() => handleGiveRosette(rosette.id)}
-                            className="flex flex-col items-center p-2 border rounded-lg hover:bg-yellow-50 cursor-pointer transition text-center"
-                        >
-                            <div className="text-2xl mb-1">{rosette.icon}</div>
-                            <span className="text-[10px] font-bold leading-tight">{rosette.name}</span>
-                        </div>
-                    ))}
-                </div>
+                <>
+                    <div className="grid grid-cols-4 gap-2 max-h-60 overflow-y-auto p-1">
+                        {rosettes.map(rosette => (
+                            <div 
+                                key={rosette.id} 
+                                onClick={() => handleGiveRosette(rosette.id)}
+                                className="flex flex-col items-center p-2 border rounded-lg hover:bg-yellow-50 cursor-pointer transition text-center"
+                            >
+                                <div className="text-2xl mb-1">{rosette.icon}</div>
+                                <span className="text-[10px] font-bold leading-tight">{rosette.name}</span>
+                            </div>
+                        ))}
+                    </div>
+                    {feedback && <div className="mt-3 p-2 bg-green-50 text-green-700 text-sm font-bold rounded-lg text-center">{feedback}</div>}
+                    <div className="mt-4 flex justify-end">
+                        <button onClick={() => { setShowModal(false); setFeedback(''); }} className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg">Kapat</button>
+                    </div>
+                </>
             )}
-
-             {activeTab === 'rosettes' && (
-                 <div className="mt-4 flex justify-end">
-                     <button onClick={() => setShowModal(false)} className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg">Kapat</button>
-                 </div>
-             )}
 
             {activeTab === 'istatistik' && selectedStudent !== 'all' && (
               <div className="space-y-4">

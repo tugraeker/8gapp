@@ -24,6 +24,7 @@ const StudentDashboard: React.FC = () => {
   const [passwordFeedback, setPasswordFeedback] = useState('');
   const [displayTotal, setDisplayTotal] = useState<number>(user?.points?.total_points || 0);
   const [displaySpendable, setDisplaySpendable] = useState<number>(user?.points?.spendable_points || 0);
+  const [feedback, setFeedback] = useState({ message: '', type: '' as 'success' | 'error' | '' });
   // Student-only menus
   const [showInventoryModal, setShowInventoryModal] = useState(false);
   const [inventory, setInventory] = useState<any[]>([]);
@@ -90,7 +91,8 @@ const StudentDashboard: React.FC = () => {
 
     socketRef.current.on('notification', (payload: any) => {
       // Görev tamamlandığında veya başka bir uyarı geldiğinde
-      alert(payload.message);
+      setFeedback({ message: payload.message, type: 'success' });
+      setTimeout(() => setFeedback({ message: '', type: '' }), 5000);
       fetchNotifications();
       fetchMissions();
     });
@@ -131,8 +133,8 @@ const StudentDashboard: React.FC = () => {
     try {
       await api.post(`/polls/${pollId}/vote`, { option_index: optionIndex });
       fetchPolls();
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Oy verilirken bir hata oluştu');
     }
   };
 
@@ -149,21 +151,27 @@ const StudentDashboard: React.FC = () => {
       try {
           const res = await api.get('/notifications');
           setNotifications(res.data);
-      } catch {}
+      } catch (err: any) {
+          console.error('Bildirimler yüklenemedi:', err.message);
+      }
   };
 
   const fetchAnnouncements = async () => {
     try {
         const res = await api.get('/announcements');
         setAnnouncements(res.data);
-    } catch {}
+    } catch (err: any) {
+        console.error('Duyurular yüklenemedi:', err.message);
+    }
   };
 
   const markNotificationRead = async (id: number) => {
       try {
           await api.post('/notifications/read', { id });
           setNotifications(notifications.map(n => n.id === id ? { ...n, read: 1 } : n));
-      } catch {}
+      } catch (err: any) {
+          console.error('Bildirim okundu işaretlenemedi:', err.message);
+      }
   };
 
   const fetchWeekly = async () => {
@@ -172,25 +180,47 @@ const StudentDashboard: React.FC = () => {
           const res2 = await api.get('/me/weeklyPointsDetailed');
           setWeeklyPoints(res1.data.weekly_points || 0);
           setWeeklyDetail(res2.data || []);
-      } catch {}
+      } catch (err: any) {
+          console.error('Haftalık istatistikler yüklenemedi:', err.message);
+      }
   };
 
   const handleBirthdaySubmit = async () => {
-    if (!birthDate) return;
+    if (!birthDate) {
+        setFeedback({ message: 'Lütfen doğum tarihinizi seçin.', type: 'error' });
+        return;
+    }
+    const selectedDate = new Date(birthDate);
+    const today = new Date();
+    if (selectedDate > today) {
+        setFeedback({ message: 'Geçersiz doğum tarihi.', type: 'error' });
+        return;
+    }
+
     try {
         await api.post('/me/birthday', { birth_date: birthDate });
-        setShowBirthdayModal(false);
-    } catch (err) {
-        console.error(err);
+        setFeedback({ message: 'Doğum günün kaydedildi! 🎉', type: 'success' });
+        setTimeout(() => {
+            setShowBirthdayModal(false);
+            setFeedback({ message: '', type: '' });
+            refreshUser();
+        }, 1500);
+    } catch (err: any) {
+        setFeedback({ message: err.response?.data?.error || 'Doğum günü kaydedilemedi', type: 'error' });
     }
   };
 
   const handleSaveAvatar = async (newConfig: any) => {
     try {
         await api.post('/me/avatar', { avatar_config: newConfig });
-        window.location.reload(); 
-    } catch (err) {
-        console.error(err);
+        await refreshUser();
+        setFeedback({ message: 'Avatar başarıyla güncellendi!', type: 'success' });
+        setTimeout(() => {
+            setShowAvatarModal(false);
+            setFeedback({ message: '', type: '' });
+        }, 1500);
+    } catch (err: any) {
+        setFeedback({ message: err.response?.data?.error || 'Avatar kaydedilemedi', type: 'error' });
     }
   };
 
@@ -198,13 +228,17 @@ const StudentDashboard: React.FC = () => {
     try {
       const res = await api.get('/me/inventory');
       setInventory(res.data || []);
-    } catch {}
+    } catch (err: any) {
+      console.error('Inventory fetch error', err);
+    }
   };
   const fetchWardrobe = async () => {
     try {
       const res = await api.get('/me/wardrobe');
       setWardrobe(res.data || []);
-    } catch {}
+    } catch (err: any) {
+      console.error('Wardrobe fetch error', err);
+    }
   };
   const startPomodoro = () => {
     if (pomodoroRunning) return;
@@ -217,7 +251,7 @@ const StudentDashboard: React.FC = () => {
         if (next <= 0) {
           window.clearInterval(pomodoroTimerRef.current!);
           setPomodoroRunning(false);
-          alert('Pomodoro tamamlandı! Aferin 👏');
+          setFeedback({ message: 'Pomodoro tamamlandı! Aferin 👏', type: 'success' });
           return 0;
         }
         return next;
@@ -234,6 +268,14 @@ const StudentDashboard: React.FC = () => {
 
   return (
     <div className="p-6 bg-blue-50 min-h-screen flex flex-col items-center">
+      {/* Global Feedback Toast */}
+      {feedback.message && !showBirthdayModal && !showAvatarModal && !showPasswordModal && !showEncModal && !showPomodoroModal && !showWardrobeModal && (
+        <div className={`fixed top-4 z-[100] px-6 py-3 rounded-xl shadow-2xl transition-all animate-bounce ${
+          feedback.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+        }`}>
+          {feedback.message}
+        </div>
+      )}
       <div className="bg-white p-8 rounded-2xl shadow-lg w-full max-w-md text-center relative overflow-hidden">
         {/* Decorative Background Circle */}
         <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-blue-200 to-transparent opacity-30 pointer-events-none"></div>
@@ -453,7 +495,14 @@ const StudentDashboard: React.FC = () => {
           </button>
           <button 
             onClick={async () => { 
-              try { await api.post('/me/avatar', { avatar_config: null }); window.location.reload(); } catch {}
+              if (window.confirm('Avatarınızı sıfırlamak istediğinize emin misiniz?')) {
+                try { 
+                  await api.post('/me/avatar', { avatar_config: null }); 
+                  await refreshUser();
+                } catch (err: any) {
+                  alert(err.response?.data?.error || 'Avatar sıfırlanamadı');
+                }
+              }
             }} 
             className="flex items-center justify-center gap-2 bg-gray-200 text-gray-700 p-3 rounded-xl hover:bg-gray-300 transition"
             title="Avatarı Sıfırla"
@@ -494,6 +543,11 @@ const StudentDashboard: React.FC = () => {
                     onChange={e => setBirthDate(e.target.value)}
                     className="w-full p-2 border rounded mb-4"
                 />
+                {feedback.message && (
+                  <div className={`text-sm mb-4 p-2 rounded ${feedback.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {feedback.message}
+                  </div>
+                )}
                 <button 
                     onClick={handleBirthdaySubmit}
                     className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 font-semibold"
@@ -507,11 +561,16 @@ const StudentDashboard: React.FC = () => {
       {/* Avatar Modal */}
       {showAvatarModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-            <div className="w-full max-w-4xl h-[80vh]">
+            <div className="w-full max-w-4xl h-[80vh] flex flex-col">
+                {feedback.message && (
+                  <div className={`text-sm mb-2 p-2 rounded text-center ${feedback.type === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
+                    {feedback.message}
+                  </div>
+                )}
                 <LayeredAvatarEditor
                   initialConfig={user?.avatar_config}
-                  onSave={(c) => { handleSaveAvatar(c); setShowAvatarModal(false); }}
-                  onCancel={() => setShowAvatarModal(false)}
+                  onSave={(c) => { handleSaveAvatar(c); }}
+                  onCancel={() => { setShowAvatarModal(false); setFeedback({ message: '', type: '' }); }}
                 />
             </div>
         </div>
@@ -524,17 +583,36 @@ const StudentDashboard: React.FC = () => {
               <h2 className="text-xl font-bold mb-4">Şifre Değiştir</h2>
               <input type="password" placeholder="Mevcut şifre" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} className="w-full p-2 border rounded mb-2" />
               <input type="password" placeholder="Yeni şifre" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="w-full p-2 border rounded mb-4" />
+              {feedback.message && (
+                <div className={`text-sm mb-4 p-2 rounded ${feedback.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                  {feedback.message}
+                </div>
+              )}
               <div className="flex gap-2">
-                <button onClick={() => setShowPasswordModal(false)} className="flex-1 bg-gray-200 p-2 rounded">İptal</button>
+                <button onClick={() => { setShowPasswordModal(false); setFeedback({ message: '', type: '' }); }} className="flex-1 bg-gray-200 p-2 rounded">İptal</button>
                 <button onClick={async () => { 
+                    if (!currentPassword || !newPassword) {
+                      setFeedback({ message: 'Tüm alanları doldurun.', type: 'error' });
+                      return;
+                    }
+                    if (newPassword.length < 6) {
+                      setFeedback({ message: 'Yeni şifre en az 6 karakter olmalı.', type: 'error' });
+                      return;
+                    }
                     try { 
                       await api.post('/me/password', { current_password: currentPassword, new_password: newPassword });
-                      setPasswordFeedback('Şifre güncellendi');
-                      setShowPasswordModal(false);
-                    } catch { setPasswordFeedback('Hata: Şifre güncellenemedi'); }
+                      setFeedback({ message: 'Şifre başarıyla güncellendi!', type: 'success' });
+                      setCurrentPassword('');
+                      setNewPassword('');
+                      setTimeout(() => {
+                        setShowPasswordModal(false);
+                        setFeedback({ message: '', type: '' });
+                      }, 1500);
+                    } catch (err: any) { 
+                      setFeedback({ message: err.response?.data?.error || 'Hata: Şifre güncellenemedi', type: 'error' });
+                    }
                 }} className="flex-1 bg-blue-600 text-white p-2 rounded">Güncelle</button>
               </div>
-              {passwordFeedback && <div className="text-sm mt-2">{passwordFeedback}</div>}
           </div>
         </div>
       )}
@@ -566,11 +644,32 @@ const StudentDashboard: React.FC = () => {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white p-6 rounded-xl w-96">
             <h2 className="text-xl font-bold mb-3">Teşvik Mesajı</h2>
+            <p className="text-xs text-gray-500 mb-2">Kendine bir motivasyon mesajı gönder!</p>
             <input value={encMsg} onChange={e => setEncMsg(e.target.value)} className="w-full p-2 border rounded mb-3" placeholder="Örn: Hedefime odaklanıyorum!" />
+            {feedback.message && (
+              <div className={`text-sm mb-4 p-2 rounded ${feedback.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                {feedback.message}
+              </div>
+            )}
             <div className="flex gap-2">
-              <button onClick={() => setShowEncModal(false)} className="flex-1 bg-gray-200 text-gray-800 p-2 rounded">İptal</button>
+              <button onClick={() => { setShowEncModal(false); setFeedback({ message: '', type: '' }); }} className="flex-1 bg-gray-200 text-gray-800 p-2 rounded">İptal</button>
               <button onClick={async () => { 
-                try { await api.post('/notifications', { message: encMsg || 'Devam ediyorum! 💪', user_id: user?.id }); setEncMsg(''); setShowEncModal(false); } catch {}
+                if (!encMsg.trim()) {
+                  setFeedback({ message: 'Mesaj boş olamaz.', type: 'error' });
+                  return;
+                }
+                try { 
+                  await api.post('/notifications', { message: encMsg.trim() || 'Devam ediyorum! 💪', user_id: user?.id }); 
+                  setFeedback({ message: 'Mesajın kendine iletildi! 🚀', type: 'success' });
+                  setEncMsg(''); 
+                  setTimeout(() => {
+                    setShowEncModal(false);
+                    setFeedback({ message: '', type: '' });
+                    fetchNotifications();
+                  }, 1500);
+                } catch (err: any) {
+                  setFeedback({ message: 'Hata oluştu.', type: 'error' });
+                }
               }} className="flex-1 bg-pink-600 text-white p-2 rounded">Gönder</button>
             </div>
           </div>
@@ -589,6 +688,11 @@ const StudentDashboard: React.FC = () => {
             <div className="text-3xl font-bold text-slate-800 text-center mb-3">
               {String(Math.floor(pomodoroRemaining / 60)).padStart(2,'0')}:{String(pomodoroRemaining % 60).padStart(2,'0')}
             </div>
+            {feedback.message && (
+              <div className={`text-sm mb-4 p-2 rounded text-center ${feedback.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                {feedback.message}
+              </div>
+            )}
             <div className="flex gap-2">
               {!pomodoroRunning ? (
                 <button onClick={startPomodoro} className="flex-1 bg-slate-700 text-white p-2 rounded">Başlat</button>
@@ -597,7 +701,7 @@ const StudentDashboard: React.FC = () => {
               )}
             </div>
             <div className="mt-3 flex justify-end">
-              <button onClick={() => setShowPomodoroModal(false)} className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg">Kapat</button>
+              <button onClick={() => { setShowPomodoroModal(false); setFeedback({ message: '', type: '' }); }} className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg">Kapat</button>
             </div>
           </div>
         </div>
@@ -673,23 +777,61 @@ const StudentDashboard: React.FC = () => {
             <div className="flex gap-2 mb-3">
               <input value={wardrobeName} onChange={e => setWardrobeName(e.target.value)} className="flex-1 p-2 border rounded" placeholder="Kombin adı" />
               <button onClick={async () => {
-                try { await api.post('/me/wardrobe', { name: wardrobeName, config: user?.avatar_config }); setWardrobeName(''); await fetchWardrobe(); } catch {}
+                if (!wardrobeName.trim()) {
+                  setFeedback({ message: 'Kombin adı gereklidir', type: 'error' });
+                  return;
+                }
+                try { 
+                  await api.post('/me/wardrobe', { name: wardrobeName.trim(), config: user?.avatar_config }); 
+                  setWardrobeName(''); 
+                  await fetchWardrobe(); 
+                  setFeedback({ message: 'Kombin kaydedildi!', type: 'success' });
+                } catch (err: any) {
+                  setFeedback({ message: err.response?.data?.error || 'Kombin kaydedilemedi', type: 'error' });
+                }
               }} className="bg-purple-600 text-white px-4 rounded">Kaydet</button>
             </div>
+            {feedback.message && (
+              <div className={`text-sm mb-4 p-2 rounded ${feedback.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                {feedback.message}
+              </div>
+            )}
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {wardrobe.map((w: any) => (
                 <div key={w.id} className="flex items-center gap-2 p-2 border rounded">
                   <span className="font-bold text-gray-700">{w.name}</span>
                   <span className="ml-auto flex gap-2">
-                    <button onClick={async () => { try { await api.post(`/me/wardrobe/${w.id}/apply`); window.location.reload(); } catch {} }} className="px-3 py-1 rounded bg-green-600 text-white">Giy</button>
-                    <button onClick={async () => { try { await api.delete(`/me/wardrobe/${w.id}`); await fetchWardrobe(); } catch {} }} className="px-3 py-1 rounded bg-red-100 text-red-700">Sil</button>
+                    <button onClick={async () => { 
+                      try { 
+                        await api.post(`/me/wardrobe/${w.id}/apply`); 
+                        await refreshUser();
+                        setFeedback({ message: 'Kombin giyildi!', type: 'success' });
+                        setTimeout(() => {
+                          setShowWardrobeModal(false);
+                          setFeedback({ message: '', type: '' });
+                        }, 1500);
+                      } catch (err: any) {
+                        setFeedback({ message: err.response?.data?.error || 'Kombin giyilemedi', type: 'error' });
+                      }
+                    }} className="px-3 py-1 rounded bg-green-600 text-white">Giy</button>
+                    <button onClick={async () => { 
+                      if (window.confirm('Bu kombini silmek istediğinize emin misiniz?')) {
+                        try { 
+                          await api.delete(`/me/wardrobe/${w.id}`); 
+                          await fetchWardrobe(); 
+                          setFeedback({ message: 'Kombin silindi.', type: 'success' });
+                        } catch (err: any) {
+                          setFeedback({ message: err.response?.data?.error || 'Kombin silinemedi', type: 'error' });
+                        }
+                      }
+                    }} className="px-3 py-1 rounded bg-red-100 text-red-700">Sil</button>
                   </span>
                 </div>
               ))}
               {wardrobe.length === 0 && <div className="text-sm text-gray-500">Henüz kombin yok</div>}
             </div>
             <div className="mt-4 flex justify-end">
-              <button onClick={() => setShowWardrobeModal(false)} className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg">Kapat</button>
+              <button onClick={() => { setShowWardrobeModal(false); setFeedback({ message: '', type: '' }); }} className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg">Kapat</button>
             </div>
           </div>
         </div>

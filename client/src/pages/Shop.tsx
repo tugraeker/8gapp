@@ -17,6 +17,7 @@ const Shop: React.FC = () => {
     const [items, setItems] = useState<Item[]>([]);
     const [inventory, setInventory] = useState<number[]>([]);
     const [spendablePoints, setSpendablePoints] = useState(0);
+    const [feedback, setFeedback] = useState({ message: '', type: '' as 'success' | 'error' | '' });
 
     useEffect(() => {
         fetchData();
@@ -32,29 +33,42 @@ const Shop: React.FC = () => {
             setItems(itemsRes.data);
             setInventory(inventoryRes.data.map((i: any) => i.item_id));
             setSpendablePoints(userRes.data.points?.spendable_points || 0);
-        } catch (err) {
-            console.error(err);
+        } catch (err: any) {
+            console.error('Veri yüklenemedi:', err.message);
         }
     };
 
     const handleBuy = async (item: Item) => {
         if (inventory.includes(item.id)) return;
         if (item.category !== 'clothing' && spendablePoints < item.cost) {
-            alert('Yetersiz puan!');
+            setFeedback({ message: 'Yetersiz puan!', type: 'error' });
+            setTimeout(() => setFeedback({ message: '', type: '' }), 3000);
             return;
         }
         try {
             await api.post('/items/buy', { item_id: item.id });
-            // Refresh data
-            fetchData();
-            alert(item.category === 'clothing' ? 'Ücretsiz eklendi!' : 'Satın alma başarılı!');
+            await fetchData();
+            setFeedback({ 
+              message: item.category === 'clothing' ? 'Ücretsiz eklendi!' : 'Satın alma başarılı!', 
+              type: 'success' 
+            });
+            setTimeout(() => setFeedback({ message: '', type: '' }), 3000);
         } catch (err: any) {
-            alert(err.response?.data?.error || 'Hata oluştu');
+            setFeedback({ message: err.response?.data?.error || 'Hata oluştu', type: 'error' });
+            setTimeout(() => setFeedback({ message: '', type: '' }), 3000);
         }
     };
 
     return (
         <div className="min-h-screen bg-green-50 p-6 flex flex-col items-center">
+            {/* Feedback Toast */}
+            {feedback.message && (
+                <div className={`fixed top-4 z-50 px-6 py-3 rounded-xl shadow-2xl transition-all animate-bounce ${
+                    feedback.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+                }`}>
+                    {feedback.message}
+                </div>
+            )}
             <div className="w-full max-w-4xl">
                 <div className="flex justify-between items-center mb-6">
                     <button onClick={() => navigate('/student-dashboard')} className="flex items-center gap-2 text-green-700 font-bold hover:bg-green-100 p-2 rounded-lg transition">

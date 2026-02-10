@@ -11,33 +11,28 @@ const Chat: React.FC = () => {
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
   const [activeGroup, setActiveGroup] = useState<'class' | 'students'>('class');
+  const [feedback, setFeedback] = useState({ message: '', type: '' as 'success' | 'error' | '' });
   const socketRef = useRef<Socket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // Connect to socket
-    socketRef.current = io('http://localhost:3000');
+    socketRef.current = io(((import.meta as any).env?.VITE_BACKEND_URL) || 'http://localhost:3000');
 
     socketRef.current.on('new_message', (message: any) => {
-      // Only append if it belongs to current group
-      // But inside this callback state might be stale if not careful, 
-      // however setActiveGroup triggers re-render and re-setup of listener if we put it in dependency
-      // Actually, better to listen to all and filter, or re-subscribe.
-      // Let's use functional update to access current state if needed, or rely on effect cleanup.
-      
-      // Since we reconstruct the listener on activeGroup change (due to dependency array),
-      // we can just check against the activeGroup in the closure scope? 
-      // Wait, if activeGroup changes, the effect runs again, so 'activeGroup' variable is fresh.
-      
-      if (message.group_type === activeGroup) {
-        setMessages(prev => [...prev, message]);
-      }
+      // Use functional update to check against the LATEST activeGroup
+      setActiveGroup(currentGroup => {
+        if (message.group_type === currentGroup) {
+          setMessages(prev => [...prev, message]);
+        }
+        return currentGroup;
+      });
     });
 
     return () => {
       socketRef.current?.disconnect();
     };
-  }, [activeGroup]);
+  }, []); // Only once
 
   useEffect(() => {
     fetchMessages();
@@ -55,29 +50,41 @@ const Chat: React.FC = () => {
     try {
       const res = await api.get(`/messages?group_type=${activeGroup}`);
       setMessages(res.data);
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error('Mesajlar yüklenemedi:', err.message);
     }
   };
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
+    const trimmed = inputText.trim();
+    if (!trimmed) return;
 
     try {
-      await api.post('/messages', { content: inputText, group_type: activeGroup });
+      await api.post('/messages', { content: trimmed, group_type: activeGroup });
       setInputText('');
+      setFeedback({ message: '', type: '' });
     } catch (err: any) {
-        if (err.response && err.response.data.error === 'Profanity detected') {
-            alert('Lütfen nazik bir dil kullanın! (Küfür yasak)');
+        if (err.response && (err.response.data.error === 'Profanity detected' || err.response.data.error?.includes('küfür'))) {
+            setFeedback({ message: 'Lütfen nazik bir dil kullanın! (Küfür yasak)', type: 'error' });
         } else {
+            setFeedback({ message: 'Mesaj gönderilemedi.', type: 'error' });
             console.error('Failed to send');
         }
+        setTimeout(() => setFeedback({ message: '', type: '' }), 3000);
     }
   };
 
   return (
     <div className="flex flex-col h-screen bg-gray-100">
+      {/* Feedback Toast */}
+      {feedback.message && (
+        <div className={`fixed top-16 left-1/2 -translate-x-1/2 z-50 px-6 py-2 rounded-lg shadow-lg text-sm font-bold ${
+          feedback.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+        }`}>
+          {feedback.message}
+        </div>
+      )}
       <div className="bg-white p-4 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-4">
              <button onClick={() => navigate('/')} className="text-gray-600 hover:text-gray-900">

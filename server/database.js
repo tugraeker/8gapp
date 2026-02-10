@@ -4,33 +4,44 @@ require('dotenv').config();
 
 let connectionString = process.env.DATABASE_URL;
 
-// SSL Mode uyarısını gidermek için sslmode=verify-full ekle veya güncelle
-if (connectionString) {
-  if (connectionString.includes('sslmode=')) {
-    connectionString = connectionString.replace(/sslmode=[^&?]+/, 'sslmode=verify-full');
-  } else {
-    connectionString += (connectionString.includes('?') ? '&' : '?') + 'sslmode=verify-full';
-  }
-}
+// SSL Mode ayarı (Sadece production'da veya zorunluysa)
+const sslConfig = (process.env.NODE_ENV === 'production' || (connectionString && connectionString.includes('sslmode=require'))) 
+  ? { rejectUnauthorized: false } 
+  : false;
 
 const pool = new Pool({
   connectionString: connectionString,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: sslConfig
 });
 
 // Yardımcı Fonksiyonlar
 const get = async (text, params) => {
-  const res = await pool.query(text, params);
-  return res.rows[0];
+  try {
+    const res = await pool.query(text, params);
+    return res.rows[0];
+  } catch (err) {
+    console.error(`[DB Error] get: ${text}`, err);
+    throw err;
+  }
 };
 
 const all = async (text, params) => {
-  const res = await pool.query(text, params);
-  return res.rows;
+  try {
+    const res = await pool.query(text, params);
+    return res.rows;
+  } catch (err) {
+    console.error(`[DB Error] all: ${text}`, err);
+    throw err;
+  }
 };
 
 const run = async (text, params) => {
-  return await pool.query(text, params);
+  try {
+    return await pool.query(text, params);
+  } catch (err) {
+    console.error(`[DB Error] run: ${text}`, err);
+    throw err;
+  }
 };
 
 const STUDENTS = [
@@ -55,6 +66,7 @@ function generateCredentials(fullName) {
 // Veritabanı Başlatma Fonksiyonu
 const initDatabase = async () => {
   try {
+    console.log("Initializing database...");
     // Tabloları Sırayla Oluştur
     await pool.query(`CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -67,17 +79,18 @@ const initDatabase = async () => {
       first_login BOOLEAN DEFAULT TRUE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
+    console.log("Users table ready.");
 
     await pool.query(`CREATE TABLE IF NOT EXISTS points (
-      user_id INTEGER PRIMARY KEY REFERENCES users(id),
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       total_points INTEGER DEFAULT 0,
       spendable_points INTEGER DEFAULT 0
     )`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS transactions (
       id SERIAL PRIMARY KEY,
-      from_user_id INTEGER REFERENCES users(id),
-      to_user_id INTEGER REFERENCES users(id),
+      from_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      to_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
       amount INTEGER,
       reason TEXT,
       type TEXT,
@@ -85,21 +98,73 @@ const initDatabase = async () => {
     )`);
 
     // Diğer Tablolar (Messages, Items vb.)
-    await pool.query(`CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, sender_id INTEGER REFERENCES users(id), content TEXT, group_type TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS items (id SERIAL PRIMARY KEY, name TEXT, category TEXT, cost INTEGER, asset_id TEXT)`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS user_items (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id), item_id INTEGER REFERENCES items(id), is_equipped BOOLEAN DEFAULT FALSE)`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS rosettes (id SERIAL PRIMARY KEY, name TEXT, description TEXT, icon TEXT)`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS user_rosettes (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id), rosette_id INTEGER REFERENCES rosettes(id), awarded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS user_wardrobe (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id), name TEXT, config TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS notifications (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id), message TEXT, read BOOLEAN DEFAULT FALSE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS teacher_notes (id SERIAL PRIMARY KEY, student_id INTEGER REFERENCES users(id), note TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, title TEXT, content TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
-    await pool.query(`CREATE TABLE IF NOT EXISTS daily_spins (user_id INTEGER PRIMARY KEY REFERENCES users(id), last_spin_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS messages (
+      id SERIAL PRIMARY KEY, 
+      sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
+      content TEXT, 
+      group_type TEXT, 
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS items (
+      id SERIAL PRIMARY KEY, 
+      name TEXT UNIQUE, 
+      category TEXT, 
+      cost INTEGER, 
+      asset_id TEXT UNIQUE
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS user_items (
+      id SERIAL PRIMARY KEY, 
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
+      item_id INTEGER REFERENCES items(id) ON DELETE CASCADE, 
+      is_equipped BOOLEAN DEFAULT FALSE
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS rosettes (
+      id SERIAL PRIMARY KEY, 
+      name TEXT UNIQUE, 
+      description TEXT, 
+      icon TEXT
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS user_rosettes (
+      id SERIAL PRIMARY KEY, 
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
+      rosette_id INTEGER REFERENCES rosettes(id) ON DELETE CASCADE, 
+      awarded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS user_wardrobe (
+      id SERIAL PRIMARY KEY, 
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
+      name TEXT, 
+      config TEXT, 
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS notifications (
+      id SERIAL PRIMARY KEY, 
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
+      message TEXT, 
+      read BOOLEAN DEFAULT FALSE, 
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS teacher_notes (
+      id SERIAL PRIMARY KEY, 
+      student_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
+      note TEXT, 
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS announcements (
+      id SERIAL PRIMARY KEY, 
+      title TEXT, 
+      content TEXT, 
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS daily_spins (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, 
+      last_spin_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
     
     // Attendance Table
     await pool.query(`CREATE TABLE IF NOT EXISTS attendance (
       id SERIAL PRIMARY KEY,
-      student_id INTEGER UNIQUE REFERENCES users(id),
+      student_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
       status TEXT DEFAULT 'present', -- 'present' (okulda), 'absent' (yok)
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
@@ -123,8 +188,8 @@ const initDatabase = async () => {
 
     await pool.query(`CREATE TABLE IF NOT EXISTS user_missions (
       id SERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id),
-      mission_id INTEGER REFERENCES daily_missions(id),
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      mission_id INTEGER REFERENCES daily_missions(id) ON DELETE CASCADE,
       status TEXT DEFAULT 'pending', -- 'pending', 'completed'
       completed_at TIMESTAMP,
       UNIQUE(user_id, mission_id)
@@ -141,12 +206,24 @@ const initDatabase = async () => {
 
     await pool.query(`CREATE TABLE IF NOT EXISTS poll_votes (
       id SERIAL PRIMARY KEY,
-      poll_id INTEGER REFERENCES polls(id),
-      user_id INTEGER REFERENCES users(id),
+      poll_id INTEGER REFERENCES polls(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
       option_index INTEGER,
       voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(poll_id, user_id)
     )`);
+
+    // Create Indexes for Performance
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_messages_group_type ON messages(group_type)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_items_user_id ON user_items(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_rosettes_user_id ON user_rosettes(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_user_id_read ON notifications(user_id, read)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_transactions_to_user_id ON transactions(to_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_transactions_from_user_id ON transactions(from_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_teacher_notes_student_id ON teacher_notes(student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_missions_user_id ON user_missions(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_poll_votes_user_id ON poll_votes(user_id)`);
 
     // Seed Rosettes
     const rosettesCheck = await get("SELECT count(*) FROM rosettes");
@@ -166,7 +243,7 @@ const initDatabase = async () => {
     // Seed Teacher
     const teacher = await get("SELECT * FROM users WHERE username = $1", ['ogretmen_8g']);
     if (!teacher) {
-      const hash = bcrypt.hashSync('8G_Ogretmen2025!', 10);
+      const hash = await bcrypt.hash('8G_Ogretmen2025!', 10);
       await pool.query("INSERT INTO users (username, password, role, name) VALUES ($1, $2, $3, $4)", ['ogretmen_8g', hash, 'teacher', 'Öğretmen']);
     }
 
@@ -175,10 +252,16 @@ const initDatabase = async () => {
       const student = await get("SELECT * FROM users WHERE name = $1", [name]);
       if (!student) {
         const { username, passwordPlain } = generateCredentials(name);
-        const hash = bcrypt.hashSync(passwordPlain, 10);
+        const hash = await bcrypt.hash(passwordPlain, 10);
         const res = await pool.query("INSERT INTO users (username, password, role, name) VALUES ($1, $2, 'student', $3) RETURNING id", [username, hash, name]);
         await pool.query("INSERT INTO points (user_id, total_points, spendable_points) VALUES ($1, 0, 0)", [res.rows[0].id]);
         console.log(`Student created: ${name} (${username} / ${passwordPlain})`);
+      } else {
+        // Ensure points table entry exists for existing student
+        const points = await get("SELECT * FROM points WHERE user_id = $1", [student.id]);
+        if (!points) {
+          await pool.query("INSERT INTO points (user_id, total_points, spendable_points) VALUES ($1, 0, 0)", [student.id]);
+        }
       }
     }
 
