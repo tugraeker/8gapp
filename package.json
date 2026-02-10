@@ -1,0 +1,14 @@
+{
+  "name": "8gapp-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "install-client": "npm install --prefix client",
+    "install-server": "npm install --prefix server",
+    "build": "npm run install-server",
+    "start": "cd server && node index.js"
+  },
+  "engines": {
+    "node": ">=22.22.0"
+  }
+}
