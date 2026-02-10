@@ -203,13 +203,15 @@ app.post('/api/login', async (req, res, next) => {
     .replace(/ç/g, 'c');
   
   try {
-      console.log(`[Login Attempt] Original: "${username}", Normalized: "${normalizedUsername}"`);
-      
-      // Hem kullanıcı adına hem de isme göre ara
-      let user = await db.get("SELECT * FROM users WHERE LOWER(username) = ?", [normalizedUsername]);
-      
+      console.log(`Login attempt for username: ${username} (normalized: ${normalizedUsername})`);
+      let user = await db.get(
+        "SELECT * FROM users WHERE LOWER(username) = ?",
+        [normalizedUsername]
+      );
+
+      // Eğer kullanıcı adıyla bulunamadıysa (isimle girmeyi denemiş olabilir)
       if (!user) {
-        // İsim bazlı arama için boşlukları temizle ve karşılaştır
+        console.log("User not found by username, searching by name...");
         const allUsers = await db.all("SELECT * FROM users");
         user = allUsers.find(u => {
           const normalizedDBName = u.name.toLowerCase().trim()
@@ -220,15 +222,17 @@ app.post('/api/login', async (req, res, next) => {
       }
 
       if (!user) {
-        console.log(`[Login Fail] User not found: "${normalizedUsername}"`);
-        return res.status(400).json({ error: 'Kullanıcı bulunamadı' });
+        console.log("User not found by any method.");
+        return res.status(401).json({ message: 'Kullanıcı adı veya şifre hatalı' });
       }
 
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-      console.log(`[Login Fail] Invalid password for: "${normalizedUsername}"`);
-      return res.status(400).json({ error: 'Hatalı şifre' });
-    }
+      console.log(`User found: ${user.name} (ID: ${user.id}). Verifying password...`);
+      const validPassword = await bcrypt.compare(password, user.password);
+      if (!validPassword) {
+        console.log("Password verification failed.");
+        return res.status(401).json({ message: 'Kullanıcı adı veya şifre hatalı' });
+      }
+      console.log("Login successful!");
 
     let pointsObj = { total_points: 0, spendable_points: 0 };
     let levelObj = { level: 1, name: "Çaylak", next: 250, min: 0 };
