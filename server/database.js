@@ -335,12 +335,18 @@ const initDatabase = async () => {
       }
     } else if (fileCredentials) {
       console.log("Database exists. Syncing passwords from kullanici_bilgileri.txt...");
+      let updatedCount = 0;
       for (const [name, creds] of Object.entries(fileCredentials)) {
         const hash = await bcrypt.hash(creds.password, 10);
         // Update password for existing user by username
-        await run("UPDATE users SET password = ? WHERE username = ?", [hash, creds.username]);
+        // Also update by name to be sure, since username format might have changed
+        const result = await run(
+          "UPDATE users SET password = ?, username = ? WHERE name = ? OR username = ?", 
+          [hash, creds.username, name, creds.username]
+        );
+        updatedCount++;
       }
-      console.log("Password sync complete.");
+      console.log(`Password sync complete. Updated ${updatedCount} users.`);
     }
 
     console.log("Database initialization complete.");
