@@ -65,9 +65,8 @@ const initWeeklyMissions = async () => {
     const existing = await db.get("SELECT count(*) as count FROM weekly_missions WHERE created_at = ?", [monday]);
     if (parseInt(existing.count) === 0) {
       const missions = [
-        { title: "Okul Yolunda", description: "Bu hafta en az 3 gün okula gel!", points: 10, type: "attendance_weekly" },
-        { title: "Sınıfın Sesi", description: "Bu hafta grup sohbetine 5 mesaj yaz!", points: 5, type: "chat_weekly" },
-        { title: "Bilgi Avcısı", description: "Bu hafta en az 1 oylamaya katıl!", points: 5, type: "poll_weekly" }
+        { title: "Güne Merhaba", description: "Bu hafta okula gelerek yoklamaya katıl!", points: 2, type: "attendance_weekly" },
+        { title: "Sohbet Saati", description: "Bu hafta grup sohbetine bir mesaj yaz!", points: 1, type: "chat_weekly" }
       ];
       for (const m of missions) {
         await db.run("INSERT INTO weekly_missions (title, description, points_reward, type, created_at) VALUES (?, ?, ?, ?, ?)", 

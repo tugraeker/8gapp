@@ -45,7 +45,7 @@ const StudentDashboard: React.FC = () => {
   const [showPollsModal, setShowPollsModal] = useState(false);
 
   useEffect(() => {
-    if (user?.first_login) {
+    if (user?.first_login && !user?.birth_date) {
         setShowBirthdayModal(true);
     }
     if (user?.id) {
