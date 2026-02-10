@@ -97,6 +97,9 @@ const Login: React.FC = () => {
           >
             {isLoading ? 'Giriş Yapılıyor...' : 'Giriş Yap'}
           </button>
+          <p className="text-center text-[10px] text-gray-400 mt-2 font-medium">
+            Girişler 30 saniyeye kadar sürebilir
+          </p>
         </form>
 
         <div className="mt-6 text-center text-xs text-gray-400">

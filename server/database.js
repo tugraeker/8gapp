@@ -99,10 +99,17 @@ const initDatabase = async () => {
     // Attendance Table
     await pool.query(`CREATE TABLE IF NOT EXISTS attendance (
       id SERIAL PRIMARY KEY,
-      student_id INTEGER REFERENCES users(id),
+      student_id INTEGER UNIQUE REFERENCES users(id),
       status TEXT DEFAULT 'present', -- 'present' (okulda), 'absent' (yok)
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    // Migration: student_id'yi unique yap (eğer tablo zaten varsa)
+    try {
+      await pool.query(`ALTER TABLE attendance ADD CONSTRAINT attendance_student_id_key UNIQUE (student_id)`);
+    } catch (e) {
+      // Zaten varsa hata verir, görmezden gelebiliriz
+    }
 
     // Daily Missions Table
     await pool.query(`CREATE TABLE IF NOT EXISTS daily_missions (

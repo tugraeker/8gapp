@@ -43,12 +43,6 @@ const StudentDashboard: React.FC = () => {
   const [polls, setPolls] = useState<any[]>([]);
   const [showPollsModal, setShowPollsModal] = useState(false);
 
-  // Daily Spin State
-  const [showSpinModal, setShowSpinModal] = useState(false);
-  const [isSpinning, setIsSpinning] = useState(false);
-  const [spinPrize, setSpinPrize] = useState<number | null>(null);
-  const [spinError, setSpinError] = useState<string | null>(null);
-
   useEffect(() => {
     if (user?.first_login) {
         setShowBirthdayModal(true);
@@ -163,25 +157,6 @@ const StudentDashboard: React.FC = () => {
         const res = await api.get('/announcements');
         setAnnouncements(res.data);
     } catch {}
-  };
-
-  const handleSpin = async () => {
-    if (isSpinning) return;
-    setIsSpinning(true);
-    setSpinError(null);
-    setSpinPrize(null);
-    
-    try {
-      // Simulate spinning animation delay
-      await new Promise(r => setTimeout(r, 2000));
-      const res = await api.post('/daily-spin');
-      setSpinPrize(res.data.prize);
-      await refreshUser();
-    } catch (err: any) {
-      setSpinError(err.response?.data?.error || 'Bir hata oluştu.');
-    } finally {
-      setIsSpinning(false);
-    }
   };
 
   const markNotificationRead = async (id: number) => {
@@ -452,12 +427,6 @@ const StudentDashboard: React.FC = () => {
         )}
 
         <div className="flex flex-col gap-3">
-          <button 
-            onClick={() => setShowSpinModal(true)} 
-            className="flex items-center justify-center gap-2 bg-gradient-to-r from-yellow-400 to-orange-500 text-white p-4 rounded-xl hover:from-yellow-500 hover:to-orange-600 transition shadow-md font-bold"
-          >
-            <Disc className={`${isSpinning ? 'animate-spin' : ''}`} /> Günlük Şans Çarkı
-          </button>
           <button onClick={() => navigate('/chat')} className="flex items-center justify-center gap-2 bg-purple-500 text-white p-3 rounded-xl hover:bg-purple-600 transition">
             <MessageSquare /> Sınıf Sohbeti
           </button>
@@ -726,62 +695,6 @@ const StudentDashboard: React.FC = () => {
         </div>
       )}
       {/* Daily Spin Modal */}
-      {showSpinModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4 backdrop-blur-sm">
-          <div className="bg-white p-8 rounded-2xl w-full max-w-sm text-center shadow-2xl transform transition-all scale-100">
-            <h2 className="text-2xl font-black mb-2 text-gray-800">Şans Çarkı</h2>
-            <p className="text-sm text-gray-500 mb-6">Her gün bir kez çevir, bedava puan kazan!</p>
-            
-            <div className="relative w-48 h-48 mx-auto mb-8 flex items-center justify-center">
-              <div className={`w-full h-full rounded-full border-8 border-yellow-400 bg-gradient-to-tr from-orange-100 to-yellow-50 flex items-center justify-center shadow-inner ${isSpinning ? 'animate-spin' : ''}`}>
-                <Disc size={80} className="text-yellow-500 opacity-40" />
-                {spinPrize && !isSpinning && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center animate-bounce">
-                    <span className="text-5xl font-black text-orange-600">+{spinPrize}</span>
-                    <span className="text-xs font-bold text-orange-400">PUAN!</span>
-                  </div>
-                )}
-                {!spinPrize && !isSpinning && (
-                  <Sparkles size={48} className="text-yellow-400 opacity-50" />
-                )}
-              </div>
-              <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-8 bg-red-600 rounded-b-full shadow-md z-10"></div>
-            </div>
-
-            {spinError && (
-              <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg font-medium">
-                {spinError}
-              </div>
-            )}
-
-            {!spinPrize ? (
-              <button 
-                onClick={handleSpin}
-                disabled={isSpinning}
-                className="w-full py-4 bg-gradient-to-r from-orange-500 to-yellow-500 text-white rounded-xl font-black text-lg shadow-lg hover:from-orange-600 hover:to-yellow-600 transition-all disabled:opacity-50"
-              >
-                {isSpinning ? 'ÇEVRİLİYOR...' : 'ŞİMDİ ÇEVİR!'}
-              </button>
-            ) : (
-              <button 
-                onClick={() => { setShowSpinModal(false); setSpinPrize(null); }}
-                className="w-full py-4 bg-green-500 text-white rounded-xl font-black text-lg shadow-lg hover:bg-green-600 transition-all"
-              >
-                HARİKA!
-              </button>
-            )}
-
-            {!isSpinning && !spinPrize && (
-              <button 
-                onClick={() => setShowSpinModal(false)}
-                className="mt-4 text-sm text-gray-400 font-bold hover:text-gray-600"
-              >
-                Kapat
-              </button>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

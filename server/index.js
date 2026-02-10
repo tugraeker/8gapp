@@ -45,9 +45,8 @@ const initDailyMissions = async () => {
     const existing = await db.get("SELECT count(*) FROM daily_missions WHERE created_at = $1", [today]);
     if (parseInt(existing.count) === 0) {
       const missions = [
-        { title: "Güne Merhaba", description: "Bugün okula gelerek yoklamaya katıl!", points: 10, type: "attendance" },
-        { title: "Şanslı Gün", description: "Günün şans çarkını çevir!", points: 5, type: "spin" },
-        { title: "Sohbet Saati", description: "Grup sohbetine bir mesaj yaz!", points: 5, type: "chat" }
+        { title: "Güne Merhaba", description: "Bugün okula gelerek yoklamaya katıl!", points: 2, type: "attendance" },
+        { title: "Sohbet Saati", description: "Grup sohbetine bir mesaj yaz!", points: 1, type: "chat" }
       ];
       for (const m of missions) {
         await db.run("INSERT INTO daily_missions (title, description, points_reward, type, created_at) VALUES ($1, $2, $3, $4, $5)", 
@@ -756,7 +755,12 @@ app.post('/api/attendance/toggle', authenticateToken, async (req, res) => {
   if (req.user.role !== 'teacher') return res.sendStatus(403);
   const { student_id, status } = req.body;
   try {
-    await db.run("UPDATE attendance SET status = $1, updated_at = NOW() WHERE student_id = $2", [status, student_id]);
+    // Daha sağlam bir güncelleme için UPSERT kullanalım
+    await db.run(`
+      INSERT INTO attendance (student_id, status, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (student_id) DO UPDATE SET status = $2, updated_at = NOW()
+    `, [student_id, status]);
     
     // Eğer 'present' yapıldıysa görev kontrolü
     if (status === 'present') {
@@ -765,6 +769,7 @@ app.post('/api/attendance/toggle', authenticateToken, async (req, res) => {
     
     res.json({ success: true });
   } catch (err) {
+    console.error('Attendance toggle error:', err);
     res.status(500).send(err.message);
   }
 });
@@ -942,58 +947,6 @@ app.post('/api/announcements', authenticateToken, async (req, res) => {
   try {
     const result = await db.run("INSERT INTO announcements (title, content) VALUES ($1, $2) RETURNING id", [title, content]);
     res.json({ id: result.rows[0].id, title, content, created_at: new Date() });
-  } catch (err) {
-    res.status(500).send(err.message);
-  }
-});
-
-// Günlük Çark (Sadece Öğrenci)
-app.post('/api/daily-spin', authenticateToken, async (req, res) => {
-  if (req.user.role !== 'student') return res.sendStatus(403);
-  
-  try {
-    const lastSpin = await db.get("SELECT last_spin_at FROM daily_spins WHERE user_id = $1", [req.user.id]);
-    const now = new Date();
-    
-    if (lastSpin) {
-      const lastDate = new Date(lastSpin.last_spin_at);
-      const hoursDiff = (now.getTime() - lastDate.getTime()) / (1000 * 60 * 60);
-      if (hoursDiff < 24) {
-        const remaining = 24 - hoursDiff;
-        return res.status(400).json({ 
-          error: `Günde sadece bir kez çevirebilirsin.`,
-          remaining_hours: Math.ceil(remaining)
-        });
-      }
-    }
-
-    // Olası ödüller: 5, 10, 20, 50 puan
-    const rewards = [5, 5, 5, 5, 10, 10, 10, 20, 20, 50];
-    const prize = rewards[Math.floor(Math.random() * rewards.length)];
-
-    // Puanı ekle
-    await db.run("UPDATE points SET spendable_points = spendable_points + $1 WHERE user_id = $2", [prize, req.user.id]);
-    
-    // Çevirme zamanını kaydet
-    await db.run("INSERT INTO daily_spins (user_id, last_spin_at) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET last_spin_at = $2", [req.user.id, now]);
-    
-    // Görev kontrolü
-    await checkMissionCompletion(req.user.id, 'spin');
-    
-    // Log kaydı
-    await db.run("INSERT INTO transactions (from_user_id, to_user_id, amount, reason, type) VALUES ($1, $2, $3, $4, 'bonus')", 
-      [req.user.id, req.user.id, prize, 'Günlük Çark Ödülü']);
-
-    // Socket ile güncelle
-    const updated = await db.get("SELECT total_points, spendable_points FROM points WHERE user_id = $1", [req.user.id]);
-    io.emit('points_updated', { 
-      student_id: req.user.id, 
-      total_points: updated.total_points, 
-      spendable_points: updated.spendable_points,
-      amount: prize 
-    });
-
-    res.json({ success: true, prize, last_spin_at: now });
   } catch (err) {
     res.status(500).send(err.message);
   }

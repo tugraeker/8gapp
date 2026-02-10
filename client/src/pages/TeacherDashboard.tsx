@@ -167,7 +167,7 @@ const TeacherDashboard: React.FC = () => {
 
   const fetchAttendance = async () => {
     try {
-      const res = await api.get('/api/attendance');
+      const res = await api.get('/attendance');
       const data: Record<number, string> = {};
       res.data.forEach((a: any) => {
         data[a.student_id] = a.status;
@@ -181,7 +181,7 @@ const TeacherDashboard: React.FC = () => {
   const handleStartAttendance = async () => {
     setAttendanceLoading(true);
     try {
-      await api.post('/api/attendance/start');
+      await api.post('/attendance/start');
       await fetchAttendance();
     } catch (e) {
       alert('Yoklama başlatılamadı');
@@ -194,7 +194,7 @@ const TeacherDashboard: React.FC = () => {
     const currentStatus = attendanceData[studentId] || 'present';
     const newStatus = currentStatus === 'present' ? 'absent' : 'present';
     try {
-      await api.post('/api/attendance/toggle', { student_id: studentId, status: newStatus });
+      await api.post('/attendance/toggle', { student_id: studentId, status: newStatus });
       setAttendanceData(prev => ({ ...prev, [studentId]: newStatus }));
     } catch (e) {
       alert('Yoklama durumu güncellenemedi');
