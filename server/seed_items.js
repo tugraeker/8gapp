@@ -20,12 +20,10 @@ const ITEMS = [
 
 async function seed() {
     try {
-        await db.run("DELETE FROM items"); 
-        // In SQLite, resetting autoincrement is done via sqlite_sequence
-        await db.run("DELETE FROM sqlite_sequence WHERE name='items'");
+        await db.run("TRUNCATE items RESTART IDENTITY CASCADE"); 
 
         for (const item of ITEMS) {
-            await db.run("INSERT INTO items (name, category, cost, asset_id) VALUES (?, ?, ?, ?)", 
+            await db.run("INSERT INTO items (name, category, cost, asset_id) VALUES ($1, $2, $3, $4)", 
                 [item.name, item.category, item.cost, item.asset_id]);
         }
         

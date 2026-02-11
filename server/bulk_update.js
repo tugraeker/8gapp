@@ -50,7 +50,7 @@ async function updatePasswords() {
         }
 
         const hash = await bcrypt.hash(update.password, 10);
-        const result = await db.run("UPDATE users SET password = ? WHERE username = ?", [hash, dbUsername]);
+        const result = await db.run("UPDATE users SET password = $1 WHERE username = $2", [hash, dbUsername]);
         
         if (result.changes > 0) {
             console.log(`Updated password for ${dbUsername}`);

@@ -1,50 +1,46 @@
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const { Pool } = require('pg');
 const fs = require('fs');
+const path = require('path');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
-const dbPath = path.resolve(__dirname, 'database.sqlite');
-const db = new sqlite3.Database(dbPath);
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
 
-// Promisify database methods
-const get = (sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) {
-        console.error(`[DB Error] get: ${sql}`, err);
-        reject(err);
-      } else {
-        resolve(row);
-      }
-    });
-  });
+// Promisify database methods for PG
+const query = async (text, params) => {
+  const start = Date.now();
+  try {
+    const res = await pool.query(text, params);
+    const duration = Date.now() - start;
+    // console.log('executed query', { text, duration, rows: res.rowCount });
+    return res;
+  } catch (err) {
+    console.error(`[DB Error] query: ${text}`, err);
+    throw err;
+  }
 };
 
-const all = (sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) {
-        console.error(`[DB Error] all: ${sql}`, err);
-        reject(err);
-      } else {
-        resolve(rows);
-      }
-    });
-  });
+const get = async (text, params) => {
+  const res = await query(text, params);
+  return res.rows[0];
 };
 
-const run = (sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function(err) {
-      if (err) {
-        console.error(`[DB Error] run: ${sql}`, err);
-        reject(err);
-      } else {
-        resolve({ id: this.lastID, changes: this.changes });
-      }
-    });
-  });
+const all = async (text, params) => {
+  const res = await query(text, params);
+  return res.rows;
+};
+
+const run = async (text, params) => {
+  const res = await query(text, params);
+  return { 
+    id: res.rows[0]?.id || null, 
+    changes: res.rowCount 
+  };
 };
 
 const STUDENTS = [
@@ -57,15 +53,6 @@ const STUDENTS = [
   "Tuğra Eker", "Elif Belis Oğuz", "Feride Elif Böbek", "Ataberk Çağman", "Kayra İnce"
 ];
 
-function generateCredentials(fullName) {
-  const parts = fullName.split(' ');
-  const firstName = parts[0].toLowerCase().replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c');
-  const lastNameInitial = parts[parts.length - 1][0].toLowerCase().replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c');
-  const username = `${firstName}.${lastNameInitial}`;
-  const passwordPlain = `sifre${Math.floor(1000 + Math.random() * 9000)}`;
-  return { username, passwordPlain };
-}
-
 function parseCredentialsFile() {
   try {
     const filePath = path.join(__dirname, '..', 'kullanici_bilgileri.txt');
@@ -73,7 +60,7 @@ function parseCredentialsFile() {
     
     const content = fs.readFileSync(filePath, 'utf8');
     const lines = content.split('\n');
-    const credentials = {}; // name -> { username, password }
+    const credentials = {};
     
     let currentName = null;
     let currentUsername = null;
@@ -102,181 +89,151 @@ function parseCredentialsFile() {
   }
 }
 
-// Veritabanı Başlatma Fonksiyonu
 const initDatabase = async () => {
   try {
-    console.log("Initializing database (SQLite)...");
+    console.log("Initializing database (PostgreSQL)...");
     
-    // Tabloları Sırayla Oluştur
-    await run(`CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    // Create Tables
+    await query(`CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
       username TEXT UNIQUE,
       password TEXT,
       role TEXT DEFAULT 'student',
       name TEXT,
       avatar_config TEXT DEFAULT '{}',
       birth_date TEXT,
-      first_login BOOLEAN DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      first_login BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
-    console.log("Users table ready.");
 
-    await run(`CREATE TABLE IF NOT EXISTS points (
-      user_id INTEGER PRIMARY KEY,
+    await query(`CREATE TABLE IF NOT EXISTS points (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       total_points INTEGER DEFAULT 0,
-      spendable_points INTEGER DEFAULT 0,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      spendable_points INTEGER DEFAULT 0
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS transactions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      from_user_id INTEGER,
-      to_user_id INTEGER,
+    await query(`CREATE TABLE IF NOT EXISTS transactions (
+      id SERIAL PRIMARY KEY,
+      from_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      to_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
       amount INTEGER,
       reason TEXT,
       type TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE SET NULL,
-      FOREIGN KEY (to_user_id) REFERENCES users(id) ON DELETE CASCADE
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, 
-      sender_id INTEGER, 
+    await query(`CREATE TABLE IF NOT EXISTS messages (
+      id SERIAL PRIMARY KEY, 
+      sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
       content TEXT, 
       group_type TEXT, 
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, 
+    await query(`CREATE TABLE IF NOT EXISTS items (
+      id SERIAL PRIMARY KEY, 
       name TEXT UNIQUE, 
       category TEXT, 
       cost INTEGER, 
       asset_id TEXT UNIQUE
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS user_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, 
-      user_id INTEGER, 
-      item_id INTEGER, 
-      is_equipped BOOLEAN DEFAULT 0,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+    await query(`CREATE TABLE IF NOT EXISTS user_items (
+      id SERIAL PRIMARY KEY, 
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
+      item_id INTEGER REFERENCES items(id) ON DELETE CASCADE, 
+      is_equipped BOOLEAN DEFAULT FALSE
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS rosettes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, 
+    await query(`CREATE TABLE IF NOT EXISTS rosettes (
+      id SERIAL PRIMARY KEY, 
       name TEXT UNIQUE, 
       description TEXT, 
       icon TEXT
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS user_rosettes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, 
-      user_id INTEGER, 
-      rosette_id INTEGER, 
-      awarded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (rosette_id) REFERENCES rosettes(id) ON DELETE CASCADE
+    await query(`CREATE TABLE IF NOT EXISTS user_rosettes (
+      id SERIAL PRIMARY KEY, 
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
+      rosette_id INTEGER REFERENCES rosettes(id) ON DELETE CASCADE, 
+      awarded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS user_wardrobe (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, 
-      user_id INTEGER, 
+    await query(`CREATE TABLE IF NOT EXISTS user_wardrobe (
+      id SERIAL PRIMARY KEY, 
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
       name TEXT, 
       config TEXT, 
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS notifications (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, 
-      user_id INTEGER, 
+    await query(`CREATE TABLE IF NOT EXISTS notifications (
+      id SERIAL PRIMARY KEY, 
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
       message TEXT, 
-      read BOOLEAN DEFAULT 0, 
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      read BOOLEAN DEFAULT FALSE, 
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS teacher_notes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, 
-      student_id INTEGER, 
+    await query(`CREATE TABLE IF NOT EXISTS teacher_notes (
+      id SERIAL PRIMARY KEY, 
+      student_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
       note TEXT, 
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS announcements (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, 
+    await query(`CREATE TABLE IF NOT EXISTS announcements (
+      id SERIAL PRIMARY KEY, 
       title TEXT, 
       content TEXT, 
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS attendance (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      student_id INTEGER UNIQUE,
+    await query(`CREATE TABLE IF NOT EXISTS attendance (
+      id SERIAL PRIMARY KEY,
+      student_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
       status TEXT DEFAULT 'present',
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS weekly_missions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await query(`CREATE TABLE IF NOT EXISTS weekly_missions (
+      id SERIAL PRIMARY KEY,
       title TEXT,
       description TEXT,
       points_reward INTEGER,
       type TEXT,
-      created_at DATE DEFAULT (DATE('now'))
+      created_at DATE DEFAULT CURRENT_DATE
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS user_missions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER,
-      mission_id INTEGER,
+    await query(`CREATE TABLE IF NOT EXISTS user_missions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      mission_id INTEGER REFERENCES weekly_missions(id) ON DELETE CASCADE,
       status TEXT DEFAULT 'pending',
-      completed_at DATETIME,
-      UNIQUE(user_id, mission_id),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (mission_id) REFERENCES weekly_missions(id) ON DELETE CASCADE
+      completed_at TIMESTAMP,
+      UNIQUE(user_id, mission_id)
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS polls (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    await query(`CREATE TABLE IF NOT EXISTS polls (
+      id SERIAL PRIMARY KEY,
       question TEXT,
       options TEXT, -- JSON string
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      expires_at DATETIME
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      expires_at TIMESTAMP
     )`);
 
-    await run(`CREATE TABLE IF NOT EXISTS poll_votes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      poll_id INTEGER,
-      user_id INTEGER,
+    await query(`CREATE TABLE IF NOT EXISTS poll_votes (
+      id SERIAL PRIMARY KEY,
+      poll_id INTEGER REFERENCES polls(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
       option_index INTEGER,
-      voted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(poll_id, user_id),
-      FOREIGN KEY (poll_id) REFERENCES polls(id) ON DELETE CASCADE,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(poll_id, user_id)
     )`);
-
-    // Create Indexes for Performance
-    await run(`CREATE INDEX IF NOT EXISTS idx_messages_group_type ON messages(group_type)`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id)`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_user_items_user_id ON user_items(user_id)`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_user_rosettes_user_id ON user_rosettes(user_id)`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_notifications_user_id_read ON notifications(user_id, "read")`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_transactions_to_user_id ON transactions(to_user_id)`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_transactions_from_user_id ON transactions(from_user_id)`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_teacher_notes_student_id ON teacher_notes(student_id)`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_user_missions_user_id ON user_missions(user_id)`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_poll_votes_user_id ON poll_votes(user_id)`);
 
     // Seed Rosettes
     const rosettesCheck = await get("SELECT count(*) as count FROM rosettes");
-    if (rosettesCheck.count === 0) {
+    if (parseInt(rosettesCheck.count) === 0) {
         const ROSETTES = [
             { name: "Kitap Kurdu", description: "Çok kitap okuyan öğrenci", icon: "📚" },
             { name: "Yardımsever", description: "Arkadaşlarına yardım eden", icon: "🤝" },
@@ -285,82 +242,50 @@ const initDatabase = async () => {
             { name: "Ödev Şampiyonu", description: "Ödevlerini düzenli yapan", icon: "📝" }
         ];
         for (const r of ROSETTES) {
-            await run("INSERT INTO rosettes (name, description, icon) VALUES (?, ?, ?)", [r.name, r.description, r.icon]);
+            await query("INSERT INTO rosettes (name, description, icon) VALUES ($1, $2, $3)", [r.name, r.description, r.icon]);
         }
     }
 
     // Seed Teacher
-    const teacher = await get("SELECT * FROM users WHERE username = ?", ['ogretmen_8g']);
+    const teacher = await get("SELECT * FROM users WHERE username = $1", ['ogretmen_8g']);
     if (!teacher) {
       const hash = await bcrypt.hash('8G_Ogretmen2025!', 10);
-      await run("INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)", ['ogretmen_8g', hash, 'teacher', 'Öğretmen']);
+      await query("INSERT INTO users (username, password, role, name) VALUES ($1, $2, $3, $4)", ['ogretmen_8g', hash, 'teacher', 'Öğretmen']);
     }
 
-    // Seed Students
-    const studentCheck = await get("SELECT count(*) as count FROM users WHERE role = 'student'");
+    // Sync Credentials and Seed Students
     const fileCredentials = parseCredentialsFile();
-
-    if (studentCheck.count === 0) {
-      console.log("Seeding students...");
+    if (fileCredentials) {
+      console.log(`Syncing credentials for ${Object.keys(fileCredentials).length} students...`);
       for (const studentName of STUDENTS) {
-        let username, passwordPlain;
-        
-        if (fileCredentials && fileCredentials[studentName]) {
-          username = fileCredentials[studentName].username;
-          passwordPlain = fileCredentials[studentName].password;
-          console.log(`Using file credentials for seeding ${studentName}`);
-        } else {
-          const creds = generateCredentials(studentName);
-          username = creds.username;
-          passwordPlain = creds.passwordPlain;
-          console.log(`Generating random credentials for ${studentName}`);
-        }
-        
-        const hash = await bcrypt.hash(passwordPlain, 10);
-        
-        const result = await run(
-          "INSERT INTO users (username, password, role, name) VALUES (?, ?, 'student', ?)",
-          [username, hash, studentName]
-        );
-        const userId = result.id;
-        
-        await run("INSERT INTO points (user_id, total_points, spendable_points) VALUES (?, 0, 0)", [userId]);
-        await run("INSERT INTO attendance (student_id, status) VALUES (?, 'present')", [userId]);
-      }
-    } else if (fileCredentials) {
-      console.log(`Database exists. Syncing passwords for ${Object.keys(fileCredentials).length} users...`);
-      let updatedCount = 0;
-      let missingUsers = [];
-      
-      for (const [name, creds] of Object.entries(fileCredentials)) {
-        const hash = await bcrypt.hash(creds.password, 10);
-        // Önce isme göre dene, sonra kullanıcı adına göre
-        let result = await run(
-          "UPDATE users SET password = ?, username = ? WHERE name = ?", 
-          [hash, creds.username, name]
-        );
-        
-        if (result.changes === 0) {
-          // İsimle bulunamadıysa kullanıcı adıyla dene
-          result = await run(
-            "UPDATE users SET password = ? WHERE username = ?", 
-            [hash, creds.username]
-          );
-        }
+        if (fileCredentials[studentName]) {
+          const creds = fileCredentials[studentName];
+          const hash = await bcrypt.hash(creds.password, 10);
+          
+          // Check if user exists
+          let user = await get("SELECT id FROM users WHERE name = $1", [studentName]);
+          if (!user) {
+            user = await get("SELECT id FROM users WHERE username = $1", [creds.username]);
+          }
 
-        if (result.changes > 0) {
-          updatedCount++;
-        } else {
-          missingUsers.push(name);
+          if (user) {
+            // Update existing user
+            await query("UPDATE users SET password = $1, username = $2 WHERE id = $3", [hash, creds.username, user.id]);
+          } else {
+            // Create new student
+            const res = await query(
+              "INSERT INTO users (username, password, role, name) VALUES ($1, $2, 'student', $3) RETURNING id",
+              [creds.username, hash, studentName]
+            );
+            const userId = res.rows[0].id;
+            await query("INSERT INTO points (user_id, total_points, spendable_points) VALUES ($1, 0, 0)", [userId]);
+            await query("INSERT INTO attendance (student_id, status) VALUES ($1, 'present')", [userId]);
+          }
         }
-      }
-      console.log(`Password sync complete. Updated ${updatedCount} users.`);
-      if (missingUsers.length > 0) {
-        console.warn(`Could not find these users in DB: ${missingUsers.join(", ")}`);
       }
     }
 
-    console.log("Database initialization complete.");
+    console.log("Database initialization complete (PostgreSQL).");
   } catch (err) {
     console.error("Database initialization failed:", err);
     throw err;
@@ -371,5 +296,7 @@ module.exports = {
   get,
   all,
   run,
-  initDatabase
+  query,
+  initDatabase,
+  pool
 };
